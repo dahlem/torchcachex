@@ -1,0 +1,63 @@
+# Default preprocessor cache configuration - automatic discovery mode
+
+# Matching rules for finding compatible cached preprocessors
+matching:
+  mode: "best"  # exact, compatible, best
+
+  # Model matching requirements
+  model:
+    require_exact_name: true
+    require_exact_type: true
+
+  # Dataset matching requirements
+  dataset:
+    require_exact_type: true
+    require_exact_source: false  # Allow different versions
+    min_samples: null  # Will use dataset.max_samples if available
+    allow_superset: true  # Can use preprocessors from larger dataset
+
+  # Detector matching requirements
+  detector:
+    require_exact_type: true
+    require_exact_config: false  # Allow compatible configs
+    feature_extractor:
+      require_exact_k: false  # Allow different k values
+      require_exact_laplacian: true
+
+  # Preprocessor matching requirements
+  preprocessor:
+    require_exact_components: false  # Allow different n_components
+    require_fitted: true  # Only match fitted preprocessors
+    min_explained_variance: 0.8  # Minimum explained variance
+    prefer_state_dict: true  # Prefer PyTorch state dict loading
+
+# Cache management settings
+cache:
+  directory: ${paths.cache_dir}
+  max_size_gb: 20  # Smaller than features since preprocessors are smaller
+  eviction_policy: "lru"  # lru, fifo, oldest
+
+# Behavior when preprocessors not found
+on_missing:
+  action: "error"  # error, compute, prompt, auto_compute
+  show_suggestions: true
+  max_suggestions: 5
+
+# Optional manual override
+override:
+  enabled: false
+  preprocessor_id: null  # Specific preprocessor ID to use
+  preprocessor_path: null  # Path to specific preprocessor file
+  use_state_dict: true  # Whether to use PyTorch state dict
+
+# Whether to use cached preprocessors in different commands
+use_cache:
+  train: true
+  optimize: true
+  evaluate: true
+  analyze: true
+
+# Auto-registration of new computations
+auto_register:
+  preprocessors: true
+  save_state_dict: true  # Also save PyTorch state dict

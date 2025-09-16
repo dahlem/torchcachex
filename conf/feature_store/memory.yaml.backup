@@ -1,0 +1,3 @@
+# In-memory feature storage
+_target_: shade_io.stores.MemoryFeatureStore
+max_size_mb: 100

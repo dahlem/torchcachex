@@ -1,0 +1,27 @@
+# Model registry configuration
+# Controls when models and PCA are registered to prevent dev/debug artifacts
+
+production_criteria:
+  # Training criteria
+  training:
+    min_epochs: 10  # Minimum epochs for production training
+    min_samples: 1000  # Minimum training samples
+    min_val_auroc: 0.7  # Minimum performance to register
+    required_metrics: ["val_auroc", "test_auroc"]  # Must have these metrics
+  
+  # PCA criteria
+  pca:
+    min_samples: 1000  # Minimum samples used for PCA fitting
+    min_components: 10  # Minimum components (to avoid toy PCAs)
+    min_explained_variance: 0.5  # Minimum explained variance ratio
+
+registration_policy:
+  allow_dev_registration: false  # If true, register with "dev" tag
+  warn_on_skip: true  # Show warnings when skipping registration
+  auto_clean_dev: true  # Automatically clean dev models older than dev_retention_days
+  dev_retention_days: 7  # Keep dev models for this many days
+
+# Tags to apply based on criteria
+tags:
+  production_tags: ["production", "ready"]
+  development_tags: ["development", "debug", "experimental"]

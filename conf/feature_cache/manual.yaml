@@ -1,0 +1,19 @@
+# Manual feature cache configuration - explicit specification
+
+defaults:
+  - default
+
+# Disable automatic matching
+matching:
+  mode: "manual"
+
+# Manual specification required
+override:
+  enabled: true
+  feature_id: ???  # Must be provided
+  pca_id: ???  # Must be provided for commands that need PCA
+
+# Error if not properly specified
+on_missing:
+  action: "error"
+  show_suggestions: false

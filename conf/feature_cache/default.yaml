@@ -1,0 +1,56 @@
+# Default feature cache configuration - automatic discovery mode
+
+# Matching rules for finding compatible cached features
+matching:
+  mode: "best"  # exact, compatible, best
+
+  # Model matching requirements
+  model:
+    require_exact_name: true
+    require_exact_type: true
+
+  # Dataset matching requirements
+  dataset:
+    require_exact_type: true
+    require_exact_source: false  # Allow different versions
+    min_samples: null  # Will use dataset.max_samples if available
+    allow_superset: true  # Can use features from larger dataset
+
+  # Detector matching requirements
+  detector:
+    require_exact_type: true
+    require_exact_config: false  # Allow compatible configs
+    feature_extractor:
+      require_exact_k: false  # Allow different k values
+      require_exact_laplacian: true
+
+# Cache management settings
+cache:
+  directory: ${paths.cache_dir}
+  max_size_gb: 50
+  eviction_policy: "lru"  # lru, fifo, oldest
+
+# Behavior when features not found
+on_missing:
+  action: "error"  # error, compute, prompt, auto_compute
+  show_suggestions: true
+  max_suggestions: 5
+
+# Optional manual override
+override:
+  enabled: false
+  feature_id: null  # Specific feature ID to use
+  feature_path: null  # Path to specific feature file
+  pca_id: null  # Specific PCA model ID
+  pca_path: null  # Path to specific PCA model
+
+# Whether to use cached features/PCA in different commands
+use_cache:
+  train: true
+  optimize: true
+  evaluate: true
+
+# Auto-registration of new computations
+auto_register:
+  features: true
+  pca: true

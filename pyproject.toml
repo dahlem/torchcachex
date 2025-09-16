@@ -1,0 +1,118 @@
+[build-system]
+requires = ["setuptools>=61.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "shade-io"
+version = "0.1.0"
+description = "Modular I/O layer for SHADE feature extraction and caching"
+readme = "README.md"
+requires-python = ">=3.10"
+license = {text = "MIT"}
+authors = [
+    {name = "SHADE Team", email = "shade@example.com"},
+]
+keywords = ["machine learning", "feature extraction", "caching", "attention analysis"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Science/Research",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+]
+
+dependencies = [
+    "torch>=2.0.0",
+    "numpy>=1.21.0",
+    "tqdm>=4.62.0",
+    "omegaconf>=2.3.0",
+    "hydra-core>=1.3.0",
+]
+
+[project.optional-dependencies]
+arrow = [
+    "pyarrow>=10.0.0",
+]
+dev = [
+    "pytest>=7.0.0",
+    "pytest-cov>=3.0.0",
+    "black>=22.0.0",
+    "ruff>=0.1.0",
+    "isort>=5.12.0",
+    "mypy>=1.0.0",
+]
+all = [
+    "shade-io[arrow,dev]",
+]
+
+[project.urls]
+Homepage = "https://github.com/shade-project/shade-io"
+Documentation = "https://shade-io.readthedocs.io"
+Repository = "https://github.com/shade-project/shade-io"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+shade_io = ["py.typed"]
+
+[tool.ruff]
+line-length = 88
+target-version = "py310"
+select = [
+    "E",    # pycodestyle errors
+    "W",    # pycodestyle warnings
+    "F",    # pyflakes
+    "I",    # isort
+    "B",    # flake8-bugbear
+    "C4",   # flake8-comprehensions
+    "UP",   # pyupgrade
+]
+ignore = [
+    "E501", # line too long (handled by black)
+    "B008", # do not perform function calls in argument defaults
+    "C901", # too complex
+]
+
+[tool.ruff.isort]
+known-first-party = ["shade_io"]
+
+[tool.isort]
+profile = "black"
+line_length = 88
+known_first_party = ["shade_io"]
+
+[tool.mypy]
+python_version = "3.10"
+ignore_missing_imports = true
+strict = true
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+python_files = ["test_*.py"]
+python_functions = ["test_*"]
+addopts = [
+    "--verbose",
+    "--cov=shade_io",
+    "--cov-report=term-missing",
+]
+
+[tool.coverage.run]
+source = ["shade_io"]
+omit = [
+    "*/tests/*",
+    "*/__pycache__/*",
+]
+
+[tool.coverage.report]
+exclude_lines = [
+    "pragma: no cover",
+    "def __repr__",
+    "if __name__ == .__main__.:",
+    "raise NotImplementedError",
+    "pass",
+    "except ImportError:",
+]

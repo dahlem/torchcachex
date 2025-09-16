@@ -1,0 +1,14 @@
+# Filtered feature set with decorator pattern
+_target_: shade_io.FilteredFeatureSet
+name: filtered_features
+
+# Base feature set to filter
+base:
+  _target_: shade_io.SimpleFeatureSet
+  name: base_features
+  extractors: ???
+
+# Filters to apply
+filters:
+  - _target_: shade_io.feature_sets.filters.RemoveConstantFeaturesFilter
+    threshold: 1e-10

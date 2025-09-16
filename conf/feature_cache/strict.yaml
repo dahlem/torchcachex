@@ -1,0 +1,43 @@
+# Strict feature cache configuration - requires exact matches
+
+defaults:
+  - default
+
+# Override matching rules for strict mode
+matching:
+  mode: "exact"
+
+  # Require exact matches for all components
+  model:
+    require_exact_name: true
+    require_exact_type: true
+    require_exact_config: true
+
+  dataset:
+    require_exact_type: true
+    require_exact_source: true
+    require_exact_config: true
+    allow_superset: false  # Must have exact sample count
+
+  detector:
+    require_exact_type: true
+    require_exact_config: true
+    feature_extractor:
+      require_exact_k: true
+      require_exact_laplacian: true
+      require_exact_all: true
+
+# Strict behavior - no fallbacks
+on_missing:
+  action: "error"
+  show_suggestions: false
+
+# Disable auto-computation
+use_cache:
+  train: true
+  optimize: true
+  evaluate: true
+
+auto_register:
+  features: false  # Must explicitly register
+  pca: false
