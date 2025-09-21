@@ -184,7 +184,7 @@ class FeatureProcessor:
                 del model_outputs
             else:
                 # Legacy path: extract attention for attention processors
-                attention_matrices = self._extract_attention_batch(model, batch)
+                attention_matrices, attention_type = self._extract_attention_batch(model, batch)
 
                 # Create AttentionData
                 attention_data = AttentionData(
@@ -192,6 +192,7 @@ class FeatureProcessor:
                     model_name=self._get_model_name(model),
                     dataset_name=self._get_dataset_name(dataset),
                     architecture=self._get_model_architecture_type(model),
+                    attention_type=attention_type,
                     metadata={
                         "batch_size": len(batch),
                         "batch_idx": i // self.batch_size,
@@ -264,7 +265,7 @@ class FeatureProcessor:
             splits=all_splits if all_splits else None,
         )
 
-    def _extract_attention_batch(self, model: Any, batch: list) -> torch.Tensor:
+    def _extract_attention_batch(self, model: Any, batch: list) -> tuple[torch.Tensor, str | None]:
         """Extract attention matrices for a batch.
 
         Args:
@@ -272,18 +273,50 @@ class FeatureProcessor:
             batch: List of samples
 
         Returns:
-            Attention tensor (batch, layers, heads, seq_len, seq_len)
+            Tuple of (attention tensor, attention_type)
         """
-        # This is a simplified implementation
-        # In practice, this would delegate to model-specific code
+        # Check if feature set has attention processor with attention type
+        attention_type = None
+        if hasattr(self.feature_set, "attention_processor") and self.feature_set.attention_processor:
+            if hasattr(self.feature_set.attention_processor, "attention_type"):
+                attention_type = self.feature_set.attention_processor.attention_type
 
+        # Extract prompts and responses
+        prompts = [s.prompt for s in batch if hasattr(s, "prompt")]
+        responses = [s.response for s in batch if hasattr(s, "response")]
+
+        if not prompts or not responses:
+            raise ValueError("Batch samples missing prompt or response")
+
+        # Use attention type specific method if available
+        if attention_type and hasattr(model, "get_attention_by_type"):
+            logger.debug(f"Extracting {attention_type} attention from model")
+            # Individual processing with attention type
+            attention_list = []
+            for prompt, response in zip(prompts, responses, strict=False):
+                attention = model.get_attention_by_type(prompt, response, attention_type)
+                if attention is not None:
+                    attention_list.append(attention)
+
+            if attention_list:
+                # Check if all have same shape
+                shapes = [a.shape for a in attention_list]
+                if len(set(shapes)) == 1:
+                    return torch.stack(attention_list), attention_type
+                else:
+                    # Pad to common shape instead of using first only
+                    logger.debug(
+                        f"Batch contains different sequence lengths: {shapes}, padding to common size"
+                    )
+                    padded_attention_list, attention_masks = self._pad_attention_matrices(attention_list)
+                    return torch.stack(padded_attention_list), attention_type
+
+        # Fallback to default attention extraction
         if hasattr(model, "get_attention_matrices_batch"):
             # Model supports batch processing
-            prompts = [s.prompt for s in batch if hasattr(s, "prompt")]
-            responses = [s.response for s in batch if hasattr(s, "response")]
-
             if prompts and responses:
-                return model.get_attention_matrices_batch(prompts, responses)
+                attention_matrices = model.get_attention_matrices_batch(prompts, responses)
+                return attention_matrices, attention_type
 
         # Fallback to individual processing
         attention_list = []
@@ -300,16 +333,103 @@ class FeatureProcessor:
             shapes = [a.shape for a in attention_list]
             if len(set(shapes)) == 1:
                 # Same shape, can stack
-                return torch.stack(attention_list)
+                return torch.stack(attention_list), attention_type
             else:
-                # Different shapes, need padding
-                # This is simplified - real implementation would handle properly
-                logger.warning(
-                    "Batch contains different sequence lengths, using first only"
+                # Pad to common shape instead of using first only
+                logger.debug(
+                    f"Batch contains different sequence lengths: {shapes}, padding to common size"
                 )
-                return attention_list[0].unsqueeze(0)
+                padded_attention_list, attention_masks = self._pad_attention_matrices(attention_list)
+                return torch.stack(padded_attention_list), attention_type
 
         raise ValueError("Could not extract attention from batch")
+
+    def _pad_attention_matrices(
+        self, attention_list: list[torch.Tensor]
+    ) -> tuple[list[torch.Tensor], list[torch.Tensor]]:
+        """Pad attention matrices to common size within batch.
+
+        Args:
+            attention_list: List of attention tensors with potentially different shapes
+
+        Returns:
+            Tuple of (padded_attention_list, attention_masks)
+            - padded_attention_list: All tensors padded to max dimensions
+            - attention_masks: Boolean masks indicating valid positions
+        """
+        if not attention_list:
+            return [], []
+
+        # Determine the structure of attention tensors
+        # They could be 3D (layers, heads, seq_len, seq_len) or 4D (layers, heads, seq1_len, seq2_len)
+        first_tensor = attention_list[0]
+
+        if first_tensor.dim() == 3:
+            # Format: (layers, seq_len, seq_len) - square attention
+            max_seq_len = max(tensor.shape[-1] for tensor in attention_list)
+
+            padded_list = []
+            mask_list = []
+
+            for tensor in attention_list:
+                layers, seq_len, _ = tensor.shape
+
+                # Create padding
+                pad_size = max_seq_len - seq_len
+                if pad_size > 0:
+                    # Pad last two dimensions: (layers, seq_len, seq_len) -> (layers, max_seq_len, max_seq_len)
+                    padded = torch.nn.functional.pad(
+                        tensor, (0, pad_size, 0, pad_size), mode='constant', value=0.0
+                    )
+                else:
+                    padded = tensor
+
+                # Create attention mask: True for valid positions, False for padding
+                mask = torch.ones(layers, max_seq_len, max_seq_len, dtype=torch.bool, device=tensor.device)
+                if pad_size > 0:
+                    mask[:, seq_len:, :] = False  # Padded rows
+                    mask[:, :, seq_len:] = False  # Padded columns
+
+                padded_list.append(padded)
+                mask_list.append(mask)
+
+        elif first_tensor.dim() == 4:
+            # Format: (layers, heads, seq1_len, seq2_len) - rectangular cross-attention
+            max_seq1_len = max(tensor.shape[-2] for tensor in attention_list)
+            max_seq2_len = max(tensor.shape[-1] for tensor in attention_list)
+
+            padded_list = []
+            mask_list = []
+
+            for tensor in attention_list:
+                layers, heads, seq1_len, seq2_len = tensor.shape
+
+                # Calculate padding for both dimensions
+                pad_seq1 = max_seq1_len - seq1_len
+                pad_seq2 = max_seq2_len - seq2_len
+
+                if pad_seq1 > 0 or pad_seq2 > 0:
+                    # Pad last two dimensions: (layers, heads, seq1, seq2) -> (layers, heads, max_seq1, max_seq2)
+                    padded = torch.nn.functional.pad(
+                        tensor, (0, pad_seq2, 0, pad_seq1), mode='constant', value=0.0
+                    )
+                else:
+                    padded = tensor
+
+                # Create attention mask: True for valid positions, False for padding
+                mask = torch.ones(layers, heads, max_seq1_len, max_seq2_len, dtype=torch.bool, device=tensor.device)
+                if pad_seq1 > 0:
+                    mask[:, :, seq1_len:, :] = False  # Padded rows (decoder positions)
+                if pad_seq2 > 0:
+                    mask[:, :, :, seq2_len:] = False  # Padded columns (encoder positions)
+
+                padded_list.append(padded)
+                mask_list.append(mask)
+
+        else:
+            raise ValueError(f"Unsupported attention tensor dimension: {first_tensor.dim()}D")
+
+        return padded_list, mask_list
 
     def _get_samples(
         self,
@@ -448,7 +568,7 @@ class FeatureProcessor:
                 )
 
             outputs_list = []
-            for i, sample in enumerate(batch):
+            for _i, sample in enumerate(batch):
                 if hasattr(sample, "prompt") and hasattr(sample, "response"):
                     prompt = sample.prompt
                     response = sample.response
@@ -718,7 +838,7 @@ class FeatureProcessor:
                 del model_outputs
             else:
                 # Legacy path: extract attention for attention processors
-                attention_matrices = self._extract_attention_batch(model, batch)
+                attention_matrices, attention_type = self._extract_attention_batch(model, batch)
 
                 # Create AttentionData
                 attention_data = AttentionData(
@@ -726,6 +846,7 @@ class FeatureProcessor:
                     model_name=self._get_model_name(model),
                     dataset_name=f"chunk_{len(chunk_samples)}",
                     architecture=self._get_model_architecture_type(model),
+                    attention_type=attention_type,
                     metadata={
                         "batch_size": len(batch),
                         "batch_idx": i // self.batch_size,
@@ -979,8 +1100,8 @@ class FeatureProcessor:
                 "Could not load streamed features back - creating minimal result"
             )
             return FeatureResult(
-                features=torch.empty(0, len(feature_names)),
-                feature_names=feature_names,
+                features=torch.empty(0, len(actual_feature_names)),
+                feature_names=actual_feature_names,
                 metadata={
                     "streaming": True,
                     "total_samples": total_processed,
@@ -1016,7 +1137,7 @@ class FeatureProcessor:
 
         else:
             # Legacy path: extract attention for attention processors
-            attention_matrices = self._extract_attention_batch(model, batch)
+            attention_matrices, attention_type = self._extract_attention_batch(model, batch)
 
             # Create AttentionData
             attention_data = AttentionData(
@@ -1024,6 +1145,7 @@ class FeatureProcessor:
                 model_name=self._get_model_name(model),
                 dataset_name="batch",
                 architecture=self._get_model_architecture_type(model),
+                attention_type=attention_type,
                 metadata={
                     "batch_size": len(batch),
                     "streaming": True,

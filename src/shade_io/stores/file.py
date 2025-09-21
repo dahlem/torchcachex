@@ -9,6 +9,7 @@ import numpy as np
 import torch
 
 from shade_io.interfaces.core import FeatureKey, FeatureResult, IFeatureStore
+from shade_io.stores.streaming_arrow import StreamingArrowWriter
 
 logger = logging.getLogger(__name__)
 
@@ -68,7 +69,9 @@ class FileFeatureStore(IFeatureStore):
         Returns:
             Path to file
         """
-        filename = f"{key.to_string()}.{self.format}"
+        # Normalize the key for filesystem safety (avoid '/' creating subdirs)
+        normalized_key = key.to_string().replace("/", "_")
+        filename = f"{normalized_key}.{self.format}"
         # Only add compression extension for formats that support it
         if self.compression and self.format in ("npz", "arrow"):
             if self.format == "npz":
@@ -81,10 +84,10 @@ class FileFeatureStore(IFeatureStore):
 
     def _detect_format_from_path(self, path: Path) -> str:
         """Detect file format from the path.
-        
+
         Args:
             path: File path to analyze
-            
+
         Returns:
             Detected format string
         """
@@ -163,6 +166,7 @@ class FileFeatureStore(IFeatureStore):
             elif detected_format == "arrow":
                 # Optional Arrow support
                 try:
+                    import pyarrow as pa
                     import pyarrow.parquet as pq
 
                     table = pq.read_table(path)
@@ -202,7 +206,24 @@ class FileFeatureStore(IFeatureStore):
                     # Check if we have multiple feature columns or a single "features" column
                     if "features" in table.column_names:
                         # Single column with all features
-                        features = torch.from_numpy(table["features"].to_numpy())
+                        features_col = table["features"]
+
+                        # Check if this is the new binary format or old list format
+                        if features_col.type == pa.binary():
+                            # NEW format - binary data (optimized)
+                            # Get metadata for reconstruction
+                            dtype = np.dtype(table.schema.metadata[b"features_dtype"].decode())
+                            eval(table.schema.metadata[b"features_shape"].decode())
+
+                            # Reconstruct features from binary
+                            features_list = []
+                            for binary_data in features_col:
+                                arr = np.frombuffer(binary_data.as_py(), dtype=dtype)
+                                features_list.append(arr)
+                            features = torch.from_numpy(np.array(features_list))
+                        else:
+                            # OLD format - legacy tolist format
+                            features = torch.from_numpy(table["features"].to_numpy())
                     else:
                         # Multiple columns, one per feature - reconstruct 2D array
                         arrays = [table[col].to_numpy() for col in table.column_names]

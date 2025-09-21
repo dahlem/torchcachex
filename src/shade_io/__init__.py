@@ -46,7 +46,6 @@ from shade_io.processor.feature_processor import (
 # Registries
 from shade_io.registry import (
     FeatureInfo,
-    FeatureRegistry,
     ModelInfo,
     ModelRegistry,
     PCAModelInfo,
@@ -98,7 +97,6 @@ __all__ = [
     # Registries
     "ModelRegistry",
     "ModelInfo",
-    "FeatureRegistry",
     "FeatureInfo",
     "PCAModelInfo",
     # Unified Registry

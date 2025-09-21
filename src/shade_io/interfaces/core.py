@@ -1,10 +1,13 @@
 """Core interfaces for the feature set architecture."""
 
+import logging
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from typing import Any
 
 import torch
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -21,6 +24,7 @@ class AttentionData:
     model_name: str
     dataset_name: str
     architecture: str = "decoder"  # encoder, decoder, or encoder_decoder
+    attention_type: str | None = None  # encoder_self, decoder_self, or cross
     metadata: dict[str, Any] = field(default_factory=dict)
 
     @property
@@ -276,10 +280,14 @@ class FeatureKey:
         # Parse metadata from remaining parts
         metadata = {}
         for part in metadata_parts:
-            if part.startswith("k"):
+            if part.startswith("k") and len(part) > 1 and part[1:].isdigit():
                 metadata["k"] = int(part[1:])
-            elif part.startswith("n"):
+            elif part.startswith("n") and len(part) > 1 and part[1:].isdigit():
                 metadata["n_samples"] = int(part[1:])
+            elif part.startswith("k") and len(part) > 1 and not part[1:].isdigit():
+                logger.debug(f"Skipping potential metadata field '{part}' - not numeric after 'k'")
+            elif part.startswith("n") and len(part) > 1 and not part[1:].isdigit():
+                logger.debug(f"Skipping potential metadata field '{part}' - not numeric after 'n'")
 
         return cls(
             feature_set_name=feature_set,

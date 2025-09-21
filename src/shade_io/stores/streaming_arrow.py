@@ -52,6 +52,12 @@ class StreamingArrowWriter:
             raise ImportError("pyarrow is required for streaming Arrow writes") from err
 
         self.path = Path(path)
+        # Ensure parent directory exists even if the filename encodes subpaths
+        try:
+            self.path.parent.mkdir(parents=True, exist_ok=True)
+        except Exception as e:
+            logger.error(f"Failed to create parent directory for {self.path}: {e}")
+            raise
         self.feature_names = feature_names
         self.compression = compression
 
@@ -286,6 +292,12 @@ class StreamingArrowWriter:
 
         # Initialize writer if needed
         if self.writer is None:
+            # Safety: ensure parent directory still exists (in case of external cleanup)
+            try:
+                self.path.parent.mkdir(parents=True, exist_ok=True)
+            except Exception as e:
+                logger.error(f"Failed to (re)create parent directory for {self.path}: {e}")
+                raise
             self.writer = self._pq.ParquetWriter(
                 self.path, self.schema, compression=self.compression
             )
