@@ -10,7 +10,7 @@ This registry consolidates management of:
 
 It provides a single, consistent API for all artifact types with support for:
 - Auto-discovery of unregistered files
-- Multiple storage formats (npz, arrow, torch, hdf5)
+- Multiple storage formats (arrow, torch)
 - Progressive/incremental caching
 - Split-aware loading with alignment
 - Fuzzy matching and compatibility checking
@@ -115,10 +115,8 @@ class StorageManager:
 
     # Supported feature storage formats
     SUPPORTED_FORMATS = {
-        "npz": ".npz",  # NumPy compressed format (default)
-        "arrow": ".arrow",  # Apache Arrow format (memory-mapped)
+        "arrow": ".arrow",  # Apache Arrow format (memory-mapped, optimized)
         "torch": ".pt",  # PyTorch native format
-        "hdf5": ".h5",  # HDF5 format (chunked access)
     }
 
     @staticmethod
@@ -126,7 +124,7 @@ class StorageManager:
         features: np.ndarray,
         labels: np.ndarray,
         file_path: Path,
-        format: str = "npz",
+        format: str = "arrow",
         metadata: dict | None = None,
         hash_ids: list[str] | None = None,
         splits: list[str] | None = None,
@@ -135,17 +133,18 @@ class StorageManager:
         file_path = Path(file_path)
         file_path.parent.mkdir(parents=True, exist_ok=True)
 
-        if format == "npz":
-            np.savez_compressed(file_path, features=features, labels=labels)
-
-        elif format == "arrow":
+        if format == "arrow":
             import pyarrow as pa
             import pyarrow.parquet as pq
 
-            # Build table data
+            # Use optimized binary format instead of slow tolist()
+            # Convert each feature row to binary for ~100x speedup
+            features_binary = [row.tobytes() for row in features]
+
+            # Build table data with binary features
             data = {
-                "features": features.tolist(),
-                "label": labels.astype(int).tolist(),
+                "features": pa.array(features_binary, type=pa.binary()),
+                "label": pa.array(labels.astype(int)),
             }
 
             if hash_ids:
@@ -159,8 +158,21 @@ class StorageManager:
             else:
                 data["split"] = ["unknown"] * len(features)
 
-            # Create table and write
+            # Create table with metadata for reconstruction
             table = pa.table(data)
+
+            # Use the same metadata schema as convert_cache.py
+            import json
+            metadata_dict = {
+                'feature_dim': str(features.shape[1]),
+                'feature_names': json.dumps(metadata.get('feature_names', [f'feature_{i}' for i in range(features.shape[1])])) if metadata else json.dumps([f'feature_{i}' for i in range(features.shape[1])]),
+                'source_file': metadata.get('source_file', 'unknown') if metadata else 'unknown',
+                'original_shape': f"{features.shape[0]}x{features.shape[1]}"
+            }
+            # Convert to bytes for Arrow
+            table_metadata = {k.encode(): v.encode() if isinstance(v, str) else v for k, v in metadata_dict.items()}
+            table = table.replace_schema_metadata(table_metadata)
+
             pq.write_table(table, str(file_path), compression="snappy")
 
         elif format == "torch":
@@ -173,14 +185,6 @@ class StorageManager:
                 file_path,
             )
 
-        elif format == "hdf5":
-            import h5py
-
-            with h5py.File(file_path, "w") as f:
-                f.create_dataset("features", data=features, compression="gzip")
-                f.create_dataset("labels", data=labels, compression="gzip")
-                if metadata:
-                    f.attrs.update(metadata)
         else:
             raise ValueError(f"Unsupported format: {format}")
 
@@ -200,46 +204,111 @@ class StorageManager:
                     for name, fext in StorageManager.SUPPORTED_FORMATS.items()
                     if fext == ext
                 ),
-                "npz",
+                "arrow",
             )
 
-        if format == "npz":
-            data = np.load(file_path)
-            return data["features"], data["labels"]
-
-        elif format == "arrow":
+        if format == "arrow":
+            import pyarrow as pa
             import pyarrow.parquet as pq
 
             table = pq.read_table(str(file_path))
 
-            # Check if we have legacy format (single "features" column) or columnar format
+            # Universal loader that handles old and new formats
             if "features" in table.schema.names:
-                # Legacy format - single features column with arrays
-                # Only convert to pandas for legacy format where we need tolist()
-                df = table.to_pandas()
-                features = np.array(df["features"].tolist())
-                labels = np.array(df["label"]) if "label" in df.columns else None
-            else:
-                # Columnar format - more efficient direct conversion from Arrow!
-                # Separate labels if present
-                if "label" in table.schema.names:
-                    labels = table.column("label").to_numpy()
-                    # Drop label column for features
-                    feature_columns = [
-                        col for col in table.schema.names if col != "label"
-                    ]
-                    features_table = table.select(feature_columns)
-                else:
-                    labels = None
-                    features_table = table
+                features_col = table.column("features")
 
-                # Convert to numpy array efficiently (direct from Arrow!)
-                # Use Arrow's built-in to_numpy when possible, fallback to pandas
-                try:
-                    features = features_table.to_pandas(types_mapper=None).values
-                except Exception:
-                    # Fallback for edge cases
-                    features = features_table.to_pandas().values
+                if features_col.type == pa.binary():
+                    # NEW format - binary data (optimized)
+                    # Get metadata for reconstruction
+                    dtype_str = table.schema.metadata[b"features_dtype"].decode()
+                    if dtype_str == 'object':
+                        # Problematic object dtype - deserialize bytes to numeric arrays
+                        df = table.to_pandas()
+                        features_list = df["features"].tolist()
+
+                        if len(features_list) > 0 and isinstance(features_list[0], bytes):
+                            # Try to deserialize bytes to actual feature arrays
+                            try:
+                                # Try float32 first (most common)
+                                deserialized = []
+                                for item in features_list:
+                                    if len(item) % 4 == 0:  # float32 check
+                                        arr = np.frombuffer(item, dtype=np.float32)
+                                        deserialized.append(arr)
+                                    else:
+                                        # If not divisible by 4, try other dtypes
+                                        if len(item) % 8 == 0:  # float64
+                                            arr = np.frombuffer(item, dtype=np.float64)
+                                            deserialized.append(arr)
+                                        else:
+                                            # Can't deserialize this item, stop trying
+                                            break
+
+                                if len(deserialized) == len(features_list):
+                                    # All items successfully deserialized - stack them
+                                    features = np.stack(deserialized)
+                                else:
+                                    # Some items failed deserialization - keep as object array
+                                    features = np.array(features_list, dtype=object)
+                            except Exception:
+                                # Deserialization failed - keep as object array
+                                features = np.array(features_list, dtype=object)
+                        else:
+                            # Not bytes, keep as-is
+                            features = np.array(features_list)
+                    else:
+                        # Proper numeric dtype - use efficient binary reconstruction
+                        dtype = np.dtype(dtype_str)
+                        features_list = []
+                        for binary_data in table["features"]:
+                            arr = np.frombuffer(binary_data.as_py(), dtype=dtype)
+                            features_list.append(arr)
+                        features = np.array(features_list)
+
+                    # Get labels
+                    labels = (
+                        table["label"].to_numpy()
+                        if "label" in table.column_names
+                        else None
+                    )
+
+                elif features_col.type in [
+                    pa.list_(pa.float64()),
+                    pa.list_(pa.float32()),
+                ]:
+                    # OLD format - list of lists (legacy tolist format)
+                    df = table.to_pandas()
+                    features = np.array(df["features"].tolist())
+                    labels = np.array(df["label"]) if "label" in df.columns else None
+                else:
+                    raise ValueError(
+                        f"Unknown features column type: {features_col.type}"
+                    )
+
+            else:
+                # Columnar format (FileFeatureStore style) - multiple feature_* columns
+                feature_columns = [
+                    name for name in table.column_names if name.startswith("feature_")
+                ]
+                if feature_columns:
+                    # Separate labels if present
+                    if "label" in table.schema.names:
+                        labels = table.column("label").to_numpy()
+                        # Select only feature columns
+                        features_table = table.select(feature_columns)
+                    else:
+                        labels = None
+                        features_table = table.select(feature_columns)
+
+                    # Convert to numpy array efficiently
+                    try:
+                        features = features_table.to_pandas(types_mapper=None).values
+                    except Exception:
+                        features = features_table.to_pandas().values
+                else:
+                    raise ValueError(
+                        "Unknown Arrow format - no 'features' column or 'feature_*' columns found"
+                    )
 
             return features, labels
 
@@ -259,14 +328,6 @@ class StorageManager:
                 if torch.is_tensor(data["labels"])
                 else data["labels"]
             )
-            return features, labels
-
-        elif format == "hdf5":
-            import h5py
-
-            with h5py.File(file_path, "r") as f:
-                features = f["features"][:]
-                labels = f["labels"][:]
             return features, labels
 
         else:
@@ -379,6 +440,58 @@ class UnifiedRegistry:
         config_str = json.dumps(config, sort_keys=True)
         return hashlib.sha256(config_str.encode()).hexdigest()[:16]
 
+    def _generate_descriptive_filename(
+        self,
+        model_cfg: DictConfig | dict,
+        dataset_cfg: DictConfig | dict,
+        detector_cfg: DictConfig | dict,
+        config_key: dict[str, Any],
+        format: str,
+        metadata: dict[str, Any] | None = None,
+    ) -> str:
+        """Generate descriptive filename instead of hash-based one."""
+        # Extract key components
+        model_name = model_cfg.get("model_name", "unknown")
+        dataset_name = dataset_cfg.get("dataset_name", "unknown_dataset")
+
+        # Get detector/feature set name
+        if hasattr(detector_cfg, "_target_"):
+            # For feature sets, use the name directly
+            detector_name = getattr(detector_cfg, "name", "unknown_detector")
+        else:
+            detector_name = detector_cfg.get("name", "unknown_detector")
+
+        # Normalize dataset name (remove HuggingFace prefix if present)
+        if "/" in dataset_name:
+            dataset_name = dataset_name.split("/")[-1]
+
+        # Normalize model name (replace / with _)
+        model_name = model_name.replace("/", "_")
+
+        # Get data info
+        data_info = config_key.get("data", {})
+        n_samples = data_info.get("n_samples", 0)
+
+        # Get k value from metadata if available
+        k_value = None
+        if metadata:
+            k_value = metadata.get("k")
+
+        # Build descriptive name parts
+        parts = [detector_name, model_name, dataset_name]
+
+        if k_value is not None:
+            parts.append(f"k{k_value}")
+
+        if n_samples > 0:
+            parts.append(f"n{n_samples}")
+
+        # Join parts and add extension
+        base_name = "_".join(parts)
+        extension = StorageManager.SUPPORTED_FORMATS[format]
+
+        return f"{base_name}{extension}"
+
     def _extract_config_key(
         self,
         model_cfg: DictConfig | dict,
@@ -395,16 +508,22 @@ class UnifiedRegistry:
             detector_cfg = OmegaConf.to_container(detector_cfg)
 
         # Model configuration
+        model_name = model_cfg.get("model_name", "unknown")
         model_key = {
-            "name": model_cfg.get("model_name", model_cfg.get("name", "unknown")),
+            "name": model_name.replace("/", "_"),  # Normalize model name
             "type": model_cfg.get("_target_", ""),
             "max_length": model_cfg.get("max_length", 1024),
         }
 
         # Dataset configuration
+        dataset_name = dataset_cfg.get("dataset_name", dataset_cfg.get("name", "unknown"))
+        # Normalize dataset name - remove owner prefix like "pminervini/"
+        if "/" in dataset_name:
+            dataset_name = dataset_name.split("/")[-1]  # Take only the part after the slash
+
         dataset_key = {
             "type": dataset_cfg.get("_target_", ""),
-            "name": dataset_cfg.get("dataset_name", dataset_cfg.get("name", "unknown")),
+            "name": dataset_name,
             "source": dataset_cfg.get("source", ""),
             "config_name": dataset_cfg.get("config_name", ""),
             "split": dataset_cfg.get("split", ""),
@@ -520,14 +639,17 @@ class UnifiedRegistry:
                 logger.warning(f"Failed to sync from shade-io registry: {e}")
 
         # Check for orphaned files (files that exist but aren't in any registry)
+        # Build set of registered filenames for efficient comparison
+        registry_files = set()
+        for entry in self.features_registry["entries"].values():
+            file_entry = entry.get("file", "")
+            if file_entry:
+                registry_files.add(Path(file_entry).name)
+
         for _format_name, extension in StorageManager.SUPPORTED_FORMATS.items():
             for file_path in self.features_dir.glob(f"*{extension}"):
-                # Check if file is already registered (by checking file path)
-                if not any(
-                    str(file_path) == entry.get("file")
-                    or str(file_path) == str(self.cache_dir / entry.get("file", ""))
-                    for entry in self.features_registry["entries"].values()
-                ):
+                # Check if file is already registered (compare filenames only)
+                if file_path.name not in registry_files:
                     logger.warning(
                         f"Orphaned feature file not in any registry: {file_path}"
                     )
@@ -711,7 +833,7 @@ class UnifiedRegistry:
         dataset_cfg: DictConfig | dict,
         detector_cfg: DictConfig | dict,
         metadata: dict[str, Any] | None = None,
-        format: str = "npz",
+        format: str = "arrow",
         hash_ids: list[str] | None = None,
         splits: list[str] | None = None,
         feature_names: list[str] | None = None,
@@ -725,7 +847,7 @@ class UnifiedRegistry:
             dataset_cfg: Dataset configuration
             detector_cfg: Detector configuration
             metadata: Additional metadata to store
-            format: Storage format (npz, arrow, torch, hdf5)
+            format: Storage format (arrow, torch)
             hash_ids: Hash IDs for each sample (for split tracking)
             splits: Split assignments for each sample
             feature_names: Names of features (meaningful names like L0_H0_λ_1)
@@ -747,14 +869,20 @@ class UnifiedRegistry:
         }
         config_key["format"] = format
 
-        # Generate ID
-        feature_id = self._compute_config_hash(config_key)
+        # Add k value from metadata if available for matching
+        if metadata and "k" in metadata:
+            config_key["k"] = metadata["k"]
+
+        # Generate descriptive filename
+        descriptive_name = self._generate_descriptive_filename(
+            model_cfg, dataset_cfg, detector_cfg, config_key, format, metadata
+        )
+
+        # Use descriptive name (without extension) as ID instead of hash
+        feature_id = descriptive_name.rsplit(".", 1)[0] if "." in descriptive_name else descriptive_name
 
         # Save features
-        feature_file = (
-            self.features_dir
-            / f"features_{feature_id}{StorageManager.SUPPORTED_FORMATS[format]}"
-        )
+        feature_file = self.features_dir / descriptive_name
 
         # Include feature names in metadata for storage
         combined_metadata = metadata.copy() if metadata else {}
@@ -783,7 +911,7 @@ class UnifiedRegistry:
         self._save_json(self.features_registry, self.features_registry_file)
 
         logger.info(
-            f"Registered features with ID: {feature_id} "
+            f"Registered features as: {descriptive_name} "
             f"({config_key['data']['n_samples']} samples, "
             f"{config_key['data']['feature_dim']} dims, {format} format)"
         )
@@ -882,10 +1010,16 @@ class UnifiedRegistry:
 
             # Get data dimensions
             n_samples = entry.get(
-                "n_samples", config.get("data", {}).get("n_samples", 0)
+                "n_samples",
+                metadata.get("n_samples",
+                    config.get("data", {}).get("n_samples", 0)
+                )
             )
             feature_dim = entry.get(
-                "feature_dim", config.get("data", {}).get("feature_dim", 0)
+                "feature_dim",
+                metadata.get("feature_dim",
+                    config.get("data", {}).get("feature_dim", 0)
+                )
             )
 
             features.append(
@@ -932,17 +1066,42 @@ class UnifiedRegistry:
         format = entry.get("config", {}).get("format", "arrow")
 
         # Efficient loading with feature names (single file read for Arrow!)
-        if format == "arrow":
+        if format in ["arrow", "snappy"]:
+            import pyarrow as pa
             import pyarrow.parquet as pq
 
             table = pq.read_table(str(file_path))
 
             # Load features and labels efficiently
             if "features" in table.schema.names:
-                # Legacy format - single features column with arrays
-                df = table.to_pandas()
-                features = np.array(df["features"].tolist())
-                labels = np.array(df["label"]) if "label" in df.columns else None
+                # Bundled format - single features column (binary or arrays)
+                features_col = table["features"]
+
+                if features_col.type == pa.binary():
+                    # Our standard cache format with feature_dim metadata
+                    if table.schema.metadata and b"feature_dim" in table.schema.metadata:
+                        feature_dim = int(table.schema.metadata[b"feature_dim"].decode())
+                        features_list = []
+                        for binary_data in features_col:
+                            # All our cached files use float32 (from convert_cache.py line 133)
+                            arr = np.frombuffer(binary_data.as_py(), dtype=np.float32)
+                            if len(arr) != feature_dim:
+                                raise ValueError(f"Feature dimension mismatch: expected {feature_dim}, got {len(arr)}")
+                            features_list.append(arr)
+                        features = np.stack(features_list)
+                    else:
+                        raise ValueError("Binary features missing feature_dim metadata")
+                else:
+                    # Legacy array format
+                    df = table.to_pandas()
+                    features = np.array(df["features"].tolist())
+
+                # Handle labels (both "label" and "labels" column names)
+                label_col = "labels" if "labels" in table.schema.names else "label"
+                if label_col in table.schema.names:
+                    labels = table[label_col].to_numpy()
+                else:
+                    labels = None
 
                 # Try to get feature names from metadata
                 if table.schema.metadata and b"feature_names" in table.schema.metadata:
@@ -955,16 +1114,17 @@ class UnifiedRegistry:
                     feature_names = [f"feature_{i}" for i in range(features.shape[-1])]
             else:
                 # Columnar format - efficient direct conversion
-                if "label" in table.schema.names:
-                    labels = table.column("label").to_numpy()
+                label_col = "labels" if "labels" in table.schema.names else "label"
+                if label_col in table.schema.names:
+                    labels = table.column(label_col).to_numpy()
                     feature_columns = [
-                        col for col in table.schema.names if col != "label"
+                        col for col in table.schema.names if col not in ["label", "labels", "hash_id", "split"]
                     ]
                     features_table = table.select(feature_columns)
                 else:
                     labels = None
                     features_table = table
-                    feature_columns = table.schema.names
+                    feature_columns = [col for col in table.schema.names if col not in ["hash_id", "split"]]
 
                 # Feature names from column names (most efficient!)
                 feature_names = feature_columns
@@ -1056,29 +1216,6 @@ class UnifiedRegistry:
             # Restore original method
             store._get_path = original_get_path
 
-    def load_features_with_names(
-        self, feature_id: str
-    ) -> tuple[np.ndarray, np.ndarray, list[str]]:
-        """Load features by ID, returning features, labels, and feature names.
-
-        Args:
-            feature_id: Feature ID to load
-
-        Returns:
-            Tuple of (features, labels, feature_names)
-        """
-        features, labels, metadata = self.load_features_with_metadata(feature_id)
-        feature_names = metadata.get("feature_names", [])
-
-        if not feature_names:
-            logger.warning(
-                f"No feature names found for feature_id {feature_id}, generating generic names"
-            )
-            # Generate generic names based on feature dimensionality
-            n_features = features.shape[1] if features.ndim > 1 else len(features)
-            feature_names = [f"feature_{i}" for i in range(n_features)]
-
-        return features, labels, feature_names
 
     def load_features_for_split(
         self,
@@ -1366,13 +1503,19 @@ class UnifiedRegistry:
                 # Check sample size match
                 if n_samples_used is not None:
                     saved_n_samples = preprocessor_config.get("n_samples_used")
-                    if saved_n_samples is not None and saved_n_samples != n_samples_used:
+                    if (
+                        saved_n_samples is not None
+                        and saved_n_samples != n_samples_used
+                    ):
                         continue  # Skip this candidate
 
                 # Check min sequence length match
                 if min_seq_length is not None:
                     saved_min_seq_length = preprocessor_config.get("min_seq_length")
-                    if saved_min_seq_length is not None and saved_min_seq_length != min_seq_length:
+                    if (
+                        saved_min_seq_length is not None
+                        and saved_min_seq_length != min_seq_length
+                    ):
                         continue  # Skip this candidate
 
                 candidates.append((score, preprocessor_id, entry))
@@ -1930,25 +2073,28 @@ class UnifiedRegistry:
             return 0.0
         score += 10.0
 
-        # Dataset matching
+        # Dataset matching (exact match required)
+        target_dataset_name = target["dataset"].get("name", "")
+        saved_dataset_name = saved["dataset"].get("name", "")
+
+        if target_dataset_name != saved_dataset_name:
+            return 0.0
+        score += 10.0
+
+        # Dataset type matching (if both have it)
         target_dataset_type = target["dataset"].get("type", "")
         saved_dataset_type = saved["dataset"].get("type", "")
-
-        # Handle auto-discovered files
-        if saved.get("auto_discovered", False):
-            target_name = target["dataset"].get("name", "").lower()
-            saved_name = saved["dataset"].get("name", "").lower()
-            if target_name and saved_name and target_name in saved_name:
-                score += 10.0
-            elif saved_name == "haluevaldataset" and target_name == "halueval":
-                score += 10.0  # Common name variation
-        else:
+        if target_dataset_type and saved_dataset_type:
             if target_dataset_type != saved_dataset_type:
                 return 0.0
-            score += 10.0
+            score += 5.0
 
-        # Dataset details
-        if target["dataset"].get("config_name") == saved["dataset"].get("config_name"):
+        # Dataset config_name matching (if both have it)
+        target_config_name = target["dataset"].get("config_name", "")
+        saved_config_name = saved["dataset"].get("config_name", "")
+        if target_config_name and saved_config_name:
+            if target_config_name != saved_config_name:
+                return 0.0
             score += 5.0
 
         # Detector matching
@@ -1974,6 +2120,17 @@ class UnifiedRegistry:
                 if target_fe.get("k_eigenvalues") == saved_fe.get("k_eigenvalues"):
                     score += 3.0
 
+        # K value matching (important for SVD-based features)
+        target_k = target.get("k")
+        saved_k = saved.get("k")
+        if target_k is not None and saved_k is not None:
+            if target_k == saved_k:
+                score += 5.0  # High weight for k matching
+            else:
+                return 0.0  # Must match exactly if both have k
+        elif target_k is None and saved_k is None:
+            score += 1.0  # Small bonus for both having no k
+
         # Prefer more samples
         n_samples = saved.get("data", {}).get("n_samples", 0)
         score += min(n_samples / 1000, 10.0)  # Up to 10 points for samples
@@ -1983,7 +2140,7 @@ class UnifiedRegistry:
             created_at = datetime.fromisoformat(saved.get("created_at", ""))
             age_days = (datetime.now() - created_at).days
             score -= age_days * 0.1  # Penalty for age
-        except:
+        except ValueError:
             pass
 
         return score
@@ -2130,7 +2287,7 @@ class UnifiedRegistry:
         detector_cfg: DictConfig | dict,
         total_samples: int,
         feature_dim: int,
-        cache_format: str = "npz",
+        cache_format: str = "arrow",
     ) -> str:
         """Initialize a progressive cache for incremental feature storage.
 
@@ -2153,19 +2310,7 @@ class UnifiedRegistry:
         temp_file = self.features_dir / f"features_{cache_id}_partial.{cache_format}"
 
         # Initialize based on format
-        if cache_format == "npz":
-            # For NPZ, accumulate in memory
-            self._progressive_caches[cache_id] = {
-                "features": [],
-                "labels": [],
-                "indices": [],
-                "total_samples": total_samples,
-                "feature_dim": feature_dim,
-                "format": cache_format,
-                "temp_file": temp_file,
-                "config": config_key,
-            }
-        elif cache_format == "arrow":
+        if cache_format == "arrow":
             # For Arrow, we can write incrementally
             import pyarrow as pa
             import pyarrow.parquet as pq
@@ -2226,12 +2371,7 @@ class UnifiedRegistry:
         if torch.is_tensor(labels):
             labels = labels.cpu().numpy()
 
-        if cache["format"] == "npz":
-            # Accumulate in memory
-            cache["features"].extend(features)
-            cache["labels"].extend(labels)
-            cache["indices"].extend(indices)
-        elif cache["format"] == "arrow":
+        if cache["format"] == "arrow":
             # Write to Arrow file
             import pyarrow as pa
 
@@ -2261,9 +2401,7 @@ class UnifiedRegistry:
 
         # Check if cache is complete
         if (
-            cache["format"] == "npz"
-            and len(cache["indices"]) >= cache["total_samples"]
-            or cache["format"] == "arrow"
+            cache["format"] == "arrow"
             and cache["cached_count"] >= cache["total_samples"]
         ):
             self.finalize_progressive_cache(cache_id)
@@ -2287,25 +2425,7 @@ class UnifiedRegistry:
 
         cache = self._progressive_caches[cache_id]
 
-        if cache["format"] == "npz":
-            # Sort by indices to maintain order
-            indices = np.array(cache["indices"])
-            features = np.array(cache["features"])
-            labels = np.array(cache["labels"])
-
-            sort_idx = np.argsort(indices)
-            features = features[sort_idx]
-            labels = labels[sort_idx]
-
-            # Save final file
-            final_file = self.features_dir / f"features_{cache_id}.npz"
-            np.savez_compressed(final_file, features=features, labels=labels)
-
-            # Remove temp file
-            if cache["temp_file"].exists():
-                cache["temp_file"].unlink()
-
-        elif cache["format"] == "arrow":
+        if cache["format"] == "arrow":
             # Close writer
             cache["writer"].close()
 
