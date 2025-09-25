@@ -137,11 +137,21 @@ class ModelRegistry:
         model_cfg: DictConfig | dict,
         dataset_cfg: DictConfig | dict,
         detector_cfg: DictConfig | dict,
+        feature_set_cfg: DictConfig | dict | None = None,
     ) -> str:
         """Compute configuration key for lookup.
 
         Creates a standardized key from the configuration that uniquely
-        identifies a model/dataset/detector combination.
+        identifies a model/dataset/feature_set combination.
+
+        Args:
+            model_cfg: Model configuration
+            dataset_cfg: Dataset configuration
+            detector_cfg: Detector configuration
+            feature_set_cfg: Feature set configuration (preferred for naming)
+
+        Returns:
+            Config key using feature_set name if available, otherwise detector name
         """
         # Convert to plain dicts if needed
         if isinstance(model_cfg, DictConfig):
@@ -150,14 +160,28 @@ class ModelRegistry:
             dataset_cfg = OmegaConf.to_container(dataset_cfg)
         if isinstance(detector_cfg, DictConfig):
             detector_cfg = OmegaConf.to_container(detector_cfg)
+        if isinstance(feature_set_cfg, DictConfig):
+            feature_set_cfg = OmegaConf.to_container(feature_set_cfg)
 
         # Extract key components using naming utilities
         model_name = get_model_name(model_cfg)
         dataset_name = get_dataset_name(dataset_cfg)
-        detector_name = get_detector_name(detector_cfg)
+
+        # Prefer feature_set name over detector name
+        if feature_set_cfg is not None:
+            from shade.utils.naming import get_feature_set_name
+            try:
+                component_name = get_feature_set_name(feature_set_cfg)
+            except ValueError as e:
+                raise ValueError(
+                    f"Cannot determine feature_set name for config key generation: {e}"
+                ) from e
+        else:
+            # Fall back to detector name (for legacy compatibility)
+            component_name = get_detector_name(detector_cfg)
 
         # Create standardized key
-        return f"{model_name}_{dataset_name}_{detector_name}"
+        return f"{model_name}_{dataset_name}_{component_name}"
 
     def register_model(
         self,
@@ -167,6 +191,7 @@ class ModelRegistry:
         detector_cfg: DictConfig | dict,
         metrics: dict[str, float],
         training_cfg: DictConfig | dict | None = None,
+        feature_set_cfg: DictConfig | dict | None = None,
         is_cv_ensemble: bool = False,
         fold_checkpoints: list[str] | None = None,
         force_update: bool = True,
@@ -181,6 +206,7 @@ class ModelRegistry:
             detector_cfg: Detector configuration
             metrics: Performance metrics (e.g., val_auroc, test_auroc)
             training_cfg: Training configuration
+            feature_set_cfg: Feature set configuration (for better naming)
             is_cv_ensemble: Whether this is a CV ensemble model
             fold_checkpoints: List of fold checkpoint paths (for CV)
             force_update: Whether to update if better model exists
@@ -195,7 +221,7 @@ class ModelRegistry:
             raise FileNotFoundError(f"Checkpoint not found: {checkpoint_path}")
 
         # Compute config key
-        config_key = self._compute_config_key(model_cfg, dataset_cfg, detector_cfg)
+        config_key = self._compute_config_key(model_cfg, dataset_cfg, detector_cfg, feature_set_cfg)
 
         # Generate model ID
         import hashlib
@@ -230,8 +256,20 @@ class ModelRegistry:
         }
 
         if is_cv_ensemble and fold_checkpoints:
-            base_metadata["fold_checkpoints"] = [str(p) for p in fold_checkpoints]
-            base_metadata["n_folds"] = len(fold_checkpoints)
+            # Validate and normalize fold checkpoint paths
+            clean_paths = []
+            for item in fold_checkpoints:
+                if isinstance(item, (str, Path)):
+                    clean_paths.append(str(item))
+                elif isinstance(item, dict) and "checkpoint_path" in item:
+                    # Handle legacy dict format during transition
+                    clean_paths.append(str(item["checkpoint_path"]))
+                    logger.warning(f"Converting legacy dict format to path string: {item['checkpoint_path']}")
+                else:
+                    raise ValueError(f"fold_checkpoints must contain only path strings or Path objects, got {type(item)}: {item}")
+
+            base_metadata["fold_checkpoints"] = clean_paths
+            base_metadata["n_folds"] = len(clean_paths)
 
         # Merge with provided metadata
         if metadata:
@@ -299,6 +337,7 @@ class ModelRegistry:
         model_cfg: DictConfig | dict | None = None,
         dataset_cfg: DictConfig | dict | None = None,
         detector_cfg: DictConfig | dict | None = None,
+        feature_set_cfg: DictConfig | dict | None = None,
         config_key: str | None = None,
         metric: str = "val_auroc",
     ) -> ModelInfo | None:
@@ -308,6 +347,7 @@ class ModelRegistry:
             model_cfg: Model configuration
             dataset_cfg: Dataset configuration
             detector_cfg: Detector configuration
+            feature_set_cfg: Feature set configuration (for better naming)
             config_key: Pre-computed config key (alternative to configs)
             metric: Metric to use for selecting best model (default: val_auroc)
 
@@ -318,7 +358,7 @@ class ModelRegistry:
         if config_key is None:
             if not all([model_cfg, dataset_cfg, detector_cfg]):
                 raise ValueError("Must provide either config_key or all configs")
-            config_key = self._compute_config_key(model_cfg, dataset_cfg, detector_cfg)
+            config_key = self._compute_config_key(model_cfg, dataset_cfg, detector_cfg, feature_set_cfg)
 
         # First check if we have a tracked best model
         best_model_id = self.registry["best_models"].get(config_key)

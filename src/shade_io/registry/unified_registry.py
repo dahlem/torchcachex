@@ -511,7 +511,7 @@ class UnifiedRegistry:
         self,
         model_cfg: DictConfig | dict,
         dataset_cfg: DictConfig | dict,
-        detector_cfg: DictConfig | dict,
+        feature_set_cfg: DictConfig | dict,
     ) -> dict[str, Any]:
         """Extract key configuration elements for matching."""
         # Convert DictConfigs to dicts
@@ -519,8 +519,8 @@ class UnifiedRegistry:
             model_cfg = OmegaConf.to_container(model_cfg)
         if isinstance(dataset_cfg, DictConfig):
             dataset_cfg = OmegaConf.to_container(dataset_cfg)
-        if isinstance(detector_cfg, DictConfig):
-            detector_cfg = OmegaConf.to_container(detector_cfg)
+        if isinstance(feature_set_cfg, DictConfig):
+            feature_set_cfg = OmegaConf.to_container(feature_set_cfg)
 
         # Model configuration
         model_name = model_cfg.get("model_name", "unknown")
@@ -551,35 +551,23 @@ class UnifiedRegistry:
 
         # Feature set configuration (used for feature/preprocessor identification)
         # The feature_set defines what features are extracted and how they're processed
-        feature_set_name = None
-        if "feature_set" in detector_cfg:
-            # Extract feature_set name if it's a nested config
-            fs_cfg = detector_cfg["feature_set"]
-            if isinstance(fs_cfg, dict):
-                feature_set_name = fs_cfg.get("name", "unknown")
-            else:
-                feature_set_name = str(fs_cfg)
-        else:
-            # Fallback to detector name for backward compatibility
-            feature_set_name = detector_cfg.get(
-                "detector_name", detector_cfg.get("name", "unknown")
-            )
+        feature_set_name = feature_set_cfg.get("name", "unknown")
 
-        detector_key = {
-            "type": detector_cfg.get("_target_", ""),
+        feature_set_key = {
             "name": feature_set_name,  # Use feature_set name for identification
         }
 
         # Add feature extractor config if present
-        if "feature_extractor" in detector_cfg:
-            fe_cfg = detector_cfg["feature_extractor"]
-            detector_key["feature_extractor"] = {
-                "type": fe_cfg.get("_target_", ""),
-                "k_eigenvalues": fe_cfg.get("k_eigenvalues"),
-                "normalize_attention": fe_cfg.get("normalize_attention", True),
-            }
+        if "extractors" in feature_set_cfg:
+            # Extract key properties from extractors for matching
+            extractors = feature_set_cfg["extractors"]
+            if extractors and len(extractors) > 0:
+                # Use first extractor as representative for matching
+                first_extractor = extractors[0] if isinstance(extractors, list) else extractors
+                if isinstance(first_extractor, dict) and "_target_" in first_extractor:
+                    feature_set_key["extractor_type"] = first_extractor["_target_"]
 
-        return {"model": model_key, "dataset": dataset_key, "detector": detector_key}
+        return {"model": model_key, "dataset": dataset_key, "detector": feature_set_key}
 
     # ========================================================================
     # Auto-Discovery Methods
@@ -865,7 +853,7 @@ class UnifiedRegistry:
         labels: np.ndarray,
         model_cfg: DictConfig | dict,
         dataset_cfg: DictConfig | dict,
-        detector_cfg: DictConfig | dict,
+        feature_set_cfg: DictConfig | dict,
         metadata: dict[str, Any] | None = None,
         format: str = "arrow",
         hash_ids: list[str] | None = None,
@@ -879,7 +867,7 @@ class UnifiedRegistry:
             labels: Label array
             model_cfg: Model configuration
             dataset_cfg: Dataset configuration
-            detector_cfg: Detector configuration
+            feature_set_cfg: Feature set configuration
             metadata: Additional metadata to store
             format: Storage format (arrow, torch)
             hash_ids: Hash IDs for each sample (for split tracking)
@@ -890,7 +878,7 @@ class UnifiedRegistry:
             Feature ID for retrieval
         """
         # Extract configuration
-        config_key = self._extract_config_key(model_cfg, dataset_cfg, detector_cfg)
+        config_key = self._extract_config_key(model_cfg, dataset_cfg, feature_set_cfg)
 
         # Add data statistics
         config_key["data"] = {
@@ -960,7 +948,7 @@ class UnifiedRegistry:
         self,
         model_cfg: DictConfig | dict,
         dataset_cfg: DictConfig | dict,
-        detector_cfg: DictConfig | dict,
+        feature_set_cfg: DictConfig | dict,
         min_samples: int | None = None,
         match_mode: str = "best",
     ) -> FeatureMatch | None:
@@ -969,14 +957,14 @@ class UnifiedRegistry:
         Args:
             model_cfg: Model configuration
             dataset_cfg: Dataset configuration
-            detector_cfg: Detector configuration
+            feature_set_cfg: Feature set configuration
             min_samples: Minimum required samples
             match_mode: "exact", "compatible", or "best"
 
         Returns:
             Best matching features or None
         """
-        target_config = self._extract_config_key(model_cfg, dataset_cfg, detector_cfg)
+        target_config = self._extract_config_key(model_cfg, dataset_cfg, feature_set_cfg)
         candidates = []
 
         for feature_id, entry in self.features_registry["entries"].items():
@@ -1277,7 +1265,7 @@ class UnifiedRegistry:
         self,
         model_cfg: DictConfig | dict,
         dataset_cfg: DictConfig | dict,
-        detector_cfg: DictConfig | dict,
+        feature_set_cfg: DictConfig | dict,
         split: str = "train",
         split_config: dict[str, Any] | None = None,
     ) -> tuple[np.ndarray, np.ndarray] | None:
@@ -1286,7 +1274,7 @@ class UnifiedRegistry:
         Args:
             model_cfg: Model configuration
             dataset_cfg: Dataset configuration
-            detector_cfg: Detector configuration
+            feature_set_cfg: Feature set configuration
             split: Which split to load ('train', 'val', or 'test')
             split_config: Data splitting configuration
 
@@ -1295,7 +1283,7 @@ class UnifiedRegistry:
         """
         # Find matching features
         match = self.find_features(
-            model_cfg, dataset_cfg, detector_cfg, match_mode="best"
+            model_cfg, dataset_cfg, feature_set_cfg, match_mode="best"
         )
 
         if not match:
@@ -1525,7 +1513,7 @@ class UnifiedRegistry:
         self,
         model_cfg: DictConfig | dict,
         dataset_cfg: DictConfig | dict,
-        detector_cfg: DictConfig | dict,
+        feature_set_cfg: DictConfig | dict,
         feature_id: str | None = None,
         n_samples_used: int | None = None,
         min_seq_length: int | None = None,
@@ -1535,7 +1523,7 @@ class UnifiedRegistry:
         Args:
             model_cfg: Model configuration
             dataset_cfg: Dataset configuration
-            detector_cfg: Detector configuration
+            feature_set_cfg: Feature set configuration
             feature_id: Optionally require specific feature ID
             n_samples_used: Number of samples used to fit preprocessor
             min_seq_length: Minimum sequence length (k parameter)
@@ -1543,7 +1531,7 @@ class UnifiedRegistry:
         Returns:
             Best matching preprocessor or None
         """
-        target_config = self._extract_config_key(model_cfg, dataset_cfg, detector_cfg)
+        target_config = self._extract_config_key(model_cfg, dataset_cfg, feature_set_cfg)
         candidates = []
 
         for preprocessor_id, entry in self.preprocessor_registry["entries"].items():
@@ -2353,7 +2341,7 @@ class UnifiedRegistry:
         self,
         model_cfg: DictConfig | dict,
         dataset_cfg: DictConfig | dict,
-        detector_cfg: DictConfig | dict,
+        feature_set_cfg: DictConfig | dict,
         total_samples: int,
         feature_dim: int,
         cache_format: str = "arrow",
@@ -2363,7 +2351,7 @@ class UnifiedRegistry:
         Args:
             model_cfg: Model configuration
             dataset_cfg: Dataset configuration
-            detector_cfg: Detector configuration
+            feature_set_cfg: Feature set configuration
             total_samples: Total number of samples to cache
             feature_dim: Feature dimension
             cache_format: Storage format
@@ -2372,7 +2360,7 @@ class UnifiedRegistry:
             Cache ID for tracking
         """
         # Generate cache ID
-        config_key = self._extract_config_key(model_cfg, dataset_cfg, detector_cfg)
+        config_key = self._extract_config_key(model_cfg, dataset_cfg, feature_set_cfg)
         cache_id = self._compute_config_hash(config_key)
 
         # Create temporary cache file
