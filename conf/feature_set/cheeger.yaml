@@ -1,0 +1,10 @@
+# Cheeger feature set configuration
+_target_: shade_io.feature_sets.base.SimpleFeatureSet
+name: cheeger_features
+description: "Cheeger bound-based feature extraction"
+
+# Cheeger feature extractor
+extractors:
+  _target_: shade.detectors.feature_extractors.cheeger.CheegerFeatureExtractor
+  include_violations: true
+  aggregation: concat

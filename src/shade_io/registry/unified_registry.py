@@ -563,7 +563,9 @@ class UnifiedRegistry:
             extractors = feature_set_cfg["extractors"]
             if extractors and len(extractors) > 0:
                 # Use first extractor as representative for matching
-                first_extractor = extractors[0] if isinstance(extractors, list) else extractors
+                first_extractor = (
+                    extractors[0] if isinstance(extractors, list) else extractors
+                )
                 if isinstance(first_extractor, dict) and "_target_" in first_extractor:
                     feature_set_key["extractor_type"] = first_extractor["_target_"]
 
@@ -897,7 +899,7 @@ class UnifiedRegistry:
 
         # Generate descriptive filename
         descriptive_name = self._generate_descriptive_filename(
-            model_cfg, dataset_cfg, detector_cfg, config_key, format, metadata
+            model_cfg, dataset_cfg, feature_set_cfg, config_key, format, metadata
         )
 
         # Use descriptive name (without extension) as ID instead of hash
@@ -964,7 +966,9 @@ class UnifiedRegistry:
         Returns:
             Best matching features or None
         """
-        target_config = self._extract_config_key(model_cfg, dataset_cfg, feature_set_cfg)
+        target_config = self._extract_config_key(
+            model_cfg, dataset_cfg, feature_set_cfg
+        )
         candidates = []
 
         for feature_id, entry in self.features_registry["entries"].items():
@@ -1531,7 +1535,9 @@ class UnifiedRegistry:
         Returns:
             Best matching preprocessor or None
         """
-        target_config = self._extract_config_key(model_cfg, dataset_cfg, feature_set_cfg)
+        target_config = self._extract_config_key(
+            model_cfg, dataset_cfg, feature_set_cfg
+        )
         candidates = []
 
         for preprocessor_id, entry in self.preprocessor_registry["entries"].items():

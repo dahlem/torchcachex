@@ -42,7 +42,11 @@ class SimpleFeatureSet(IFeatureSet):
             description: Human-readable description
         """
         self._name = name
-        self.extractors = extractors
+        # Ensure extractors is always a list for consistent handling
+        if not isinstance(extractors, (list, tuple)):
+            self.extractors = [extractors]  # Wrap single extractor in a list
+        else:
+            self.extractors = extractors
         self.attention_processor = attention_processor
         self.output_processor = output_processor
         self.description = description
@@ -114,6 +118,7 @@ class SimpleFeatureSet(IFeatureSet):
         all_features = []
         all_feature_names = []
 
+        # self.extractors is guaranteed to be a list from __init__
         for extractor in self.extractors:
             # Extract features
             if hasattr(extractor, "extract"):
@@ -398,21 +403,22 @@ class CompositeFeatureSet(IFeatureSet):
                 result = component.compute_features(attention_data)
 
                 if result is None or result.features is None:
-                    raise ValueError(f"Component '{component_name}' returned None features")
+                    raise ValueError(
+                        f"Component '{component_name}' returned None features"
+                    )
 
                 all_features.append(result.features)
 
                 # Prefix feature names with component name
                 prefixed_names = [
-                    f"{component_name}.{name}"
-                    for name in result.feature_names
+                    f"{component_name}.{name}" for name in result.feature_names
                 ]
                 all_feature_names.extend(prefixed_names)
 
                 # Collect metadata
-                if hasattr(result, 'metadata') and result.metadata:
+                if hasattr(result, "metadata") and result.metadata:
                     all_metadata[component_name] = result.metadata
-                elif hasattr(component, '_metadata'):
+                elif hasattr(component, "_metadata"):
                     all_metadata[component_name] = component._metadata
                 else:
                     all_metadata[component_name] = {}

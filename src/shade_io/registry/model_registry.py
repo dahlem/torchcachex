@@ -170,6 +170,7 @@ class ModelRegistry:
         # Prefer feature_set name over detector name
         if feature_set_cfg is not None:
             from shade.utils.naming import get_feature_set_name
+
             try:
                 component_name = get_feature_set_name(feature_set_cfg)
             except ValueError as e:
@@ -221,7 +222,9 @@ class ModelRegistry:
             raise FileNotFoundError(f"Checkpoint not found: {checkpoint_path}")
 
         # Compute config key
-        config_key = self._compute_config_key(model_cfg, dataset_cfg, detector_cfg, feature_set_cfg)
+        config_key = self._compute_config_key(
+            model_cfg, dataset_cfg, detector_cfg, feature_set_cfg
+        )
 
         # Generate model ID
         import hashlib
@@ -264,9 +267,13 @@ class ModelRegistry:
                 elif isinstance(item, dict) and "checkpoint_path" in item:
                     # Handle legacy dict format during transition
                     clean_paths.append(str(item["checkpoint_path"]))
-                    logger.warning(f"Converting legacy dict format to path string: {item['checkpoint_path']}")
+                    logger.warning(
+                        f"Converting legacy dict format to path string: {item['checkpoint_path']}"
+                    )
                 else:
-                    raise ValueError(f"fold_checkpoints must contain only path strings or Path objects, got {type(item)}: {item}")
+                    raise ValueError(
+                        f"fold_checkpoints must contain only path strings or Path objects, got {type(item)}: {item}"
+                    )
 
             base_metadata["fold_checkpoints"] = clean_paths
             base_metadata["n_folds"] = len(clean_paths)
@@ -358,7 +365,9 @@ class ModelRegistry:
         if config_key is None:
             if not all([model_cfg, dataset_cfg, detector_cfg]):
                 raise ValueError("Must provide either config_key or all configs")
-            config_key = self._compute_config_key(model_cfg, dataset_cfg, detector_cfg, feature_set_cfg)
+            config_key = self._compute_config_key(
+                model_cfg, dataset_cfg, detector_cfg, feature_set_cfg
+            )
 
         # First check if we have a tracked best model
         best_model_id = self.registry["best_models"].get(config_key)

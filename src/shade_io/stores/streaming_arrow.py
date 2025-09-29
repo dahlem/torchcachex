@@ -63,7 +63,9 @@ class StreamingArrowWriter:
 
         # Validate and set buffer_size with defensive checks
         if buffer_size > 100:
-            logger.warning(f"Large buffer_size ({buffer_size}) may cause memory issues. Consider using smaller values (e.g., 5-10 batches)")
+            logger.warning(
+                f"Large buffer_size ({buffer_size}) may cause memory issues. Consider using smaller values (e.g., 5-10 batches)"
+            )
         self.buffer_size = buffer_size
         self.enable_async = enable_async
 
@@ -226,12 +228,16 @@ class StreamingArrowWriter:
 
         # Write if buffer is full
         if len(self.buffer) >= self.buffer_size:
-            logger.debug(f"Buffer full ({len(self.buffer)}/{self.buffer_size}), flushing")
+            logger.debug(
+                f"Buffer full ({len(self.buffer)}/{self.buffer_size}), flushing"
+            )
             self._flush_buffer()
 
         # Add warning if buffer is getting very large (should not happen with correct buffer_size)
         if len(self.buffer) > 50:
-            logger.warning(f"Buffer has grown to {len(self.buffer)} batches, consider reducing buffer_size")
+            logger.warning(
+                f"Buffer has grown to {len(self.buffer)} batches, consider reducing buffer_size"
+            )
 
     def _flush_buffer(self) -> None:
         """Flush current buffer to disk."""
@@ -296,7 +302,9 @@ class StreamingArrowWriter:
             try:
                 self.path.parent.mkdir(parents=True, exist_ok=True)
             except Exception as e:
-                logger.error(f"Failed to (re)create parent directory for {self.path}: {e}")
+                logger.error(
+                    f"Failed to (re)create parent directory for {self.path}: {e}"
+                )
                 raise
             self.writer = self._pq.ParquetWriter(
                 self.path, self.schema, compression=self.compression

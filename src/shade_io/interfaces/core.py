@@ -285,9 +285,13 @@ class FeatureKey:
             elif part.startswith("n") and len(part) > 1 and part[1:].isdigit():
                 metadata["n_samples"] = int(part[1:])
             elif part.startswith("k") and len(part) > 1 and not part[1:].isdigit():
-                logger.debug(f"Skipping potential metadata field '{part}' - not numeric after 'k'")
+                logger.debug(
+                    f"Skipping potential metadata field '{part}' - not numeric after 'k'"
+                )
             elif part.startswith("n") and len(part) > 1 and not part[1:].isdigit():
-                logger.debug(f"Skipping potential metadata field '{part}' - not numeric after 'n'")
+                logger.debug(
+                    f"Skipping potential metadata field '{part}' - not numeric after 'n'"
+                )
 
         return cls(
             feature_set_name=feature_set,

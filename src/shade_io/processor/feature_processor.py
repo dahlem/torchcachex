@@ -184,7 +184,9 @@ class FeatureProcessor:
                 del model_outputs
             else:
                 # Legacy path: extract attention for attention processors
-                attention_matrices, attention_type = self._extract_attention_batch(model, batch)
+                attention_matrices, attention_type = self._extract_attention_batch(
+                    model, batch
+                )
 
                 # Create AttentionData
                 attention_data = AttentionData(
@@ -265,7 +267,9 @@ class FeatureProcessor:
             splits=all_splits if all_splits else None,
         )
 
-    def _extract_attention_batch(self, model: Any, batch: list) -> tuple[torch.Tensor, str | None]:
+    def _extract_attention_batch(
+        self, model: Any, batch: list
+    ) -> tuple[torch.Tensor, str | None]:
         """Extract attention matrices for a batch.
 
         Args:
@@ -277,7 +281,10 @@ class FeatureProcessor:
         """
         # Check if feature set has attention processor with attention type
         attention_type = None
-        if hasattr(self.feature_set, "attention_processor") and self.feature_set.attention_processor:
+        if (
+            hasattr(self.feature_set, "attention_processor")
+            and self.feature_set.attention_processor
+        ):
             if hasattr(self.feature_set.attention_processor, "attention_type"):
                 attention_type = self.feature_set.attention_processor.attention_type
 
@@ -294,7 +301,9 @@ class FeatureProcessor:
             # Individual processing with attention type
             attention_list = []
             for prompt, response in zip(prompts, responses, strict=False):
-                attention = model.get_attention_by_type(prompt, response, attention_type)
+                attention = model.get_attention_by_type(
+                    prompt, response, attention_type
+                )
                 if attention is not None:
                     attention_list.append(attention)
 
@@ -308,14 +317,18 @@ class FeatureProcessor:
                     logger.debug(
                         f"Batch contains different sequence lengths: {shapes}, padding to common size"
                     )
-                    padded_attention_list, attention_masks = self._pad_attention_matrices(attention_list)
+                    padded_attention_list, attention_masks = (
+                        self._pad_attention_matrices(attention_list)
+                    )
                     return torch.stack(padded_attention_list), attention_type
 
         # Fallback to default attention extraction
         if hasattr(model, "get_attention_matrices_batch"):
             # Model supports batch processing
             if prompts and responses:
-                attention_matrices = model.get_attention_matrices_batch(prompts, responses)
+                attention_matrices = model.get_attention_matrices_batch(
+                    prompts, responses
+                )
                 return attention_matrices, attention_type
 
         # Fallback to individual processing
@@ -339,7 +352,9 @@ class FeatureProcessor:
                 logger.debug(
                     f"Batch contains different sequence lengths: {shapes}, padding to common size"
                 )
-                padded_attention_list, attention_masks = self._pad_attention_matrices(attention_list)
+                padded_attention_list, attention_masks = self._pad_attention_matrices(
+                    attention_list
+                )
                 return torch.stack(padded_attention_list), attention_type
 
         raise ValueError("Could not extract attention from batch")
@@ -379,13 +394,19 @@ class FeatureProcessor:
                 if pad_size > 0:
                     # Pad last two dimensions: (layers, seq_len, seq_len) -> (layers, max_seq_len, max_seq_len)
                     padded = torch.nn.functional.pad(
-                        tensor, (0, pad_size, 0, pad_size), mode='constant', value=0.0
+                        tensor, (0, pad_size, 0, pad_size), mode="constant", value=0.0
                     )
                 else:
                     padded = tensor
 
                 # Create attention mask: True for valid positions, False for padding
-                mask = torch.ones(layers, max_seq_len, max_seq_len, dtype=torch.bool, device=tensor.device)
+                mask = torch.ones(
+                    layers,
+                    max_seq_len,
+                    max_seq_len,
+                    dtype=torch.bool,
+                    device=tensor.device,
+                )
                 if pad_size > 0:
                     mask[:, seq_len:, :] = False  # Padded rows
                     mask[:, :, seq_len:] = False  # Padded columns
@@ -411,23 +432,34 @@ class FeatureProcessor:
                 if pad_seq1 > 0 or pad_seq2 > 0:
                     # Pad last two dimensions: (layers, heads, seq1, seq2) -> (layers, heads, max_seq1, max_seq2)
                     padded = torch.nn.functional.pad(
-                        tensor, (0, pad_seq2, 0, pad_seq1), mode='constant', value=0.0
+                        tensor, (0, pad_seq2, 0, pad_seq1), mode="constant", value=0.0
                     )
                 else:
                     padded = tensor
 
                 # Create attention mask: True for valid positions, False for padding
-                mask = torch.ones(layers, heads, max_seq1_len, max_seq2_len, dtype=torch.bool, device=tensor.device)
+                mask = torch.ones(
+                    layers,
+                    heads,
+                    max_seq1_len,
+                    max_seq2_len,
+                    dtype=torch.bool,
+                    device=tensor.device,
+                )
                 if pad_seq1 > 0:
                     mask[:, :, seq1_len:, :] = False  # Padded rows (decoder positions)
                 if pad_seq2 > 0:
-                    mask[:, :, :, seq2_len:] = False  # Padded columns (encoder positions)
+                    mask[:, :, :, seq2_len:] = (
+                        False  # Padded columns (encoder positions)
+                    )
 
                 padded_list.append(padded)
                 mask_list.append(mask)
 
         else:
-            raise ValueError(f"Unsupported attention tensor dimension: {first_tensor.dim()}D")
+            raise ValueError(
+                f"Unsupported attention tensor dimension: {first_tensor.dim()}D"
+            )
 
         return padded_list, mask_list
 
@@ -838,7 +870,9 @@ class FeatureProcessor:
                 del model_outputs
             else:
                 # Legacy path: extract attention for attention processors
-                attention_matrices, attention_type = self._extract_attention_batch(model, batch)
+                attention_matrices, attention_type = self._extract_attention_batch(
+                    model, batch
+                )
 
                 # Create AttentionData
                 attention_data = AttentionData(
@@ -940,14 +974,20 @@ class FeatureProcessor:
         first_batch_size = min(self.batch_size, len(samples))
         first_batch = samples[0:first_batch_size]
 
-        logger.info(f"Phase 1: Processing first batch of {len(first_batch)} samples for schema discovery")
+        logger.info(
+            f"Phase 1: Processing first batch of {len(first_batch)} samples for schema discovery"
+        )
         first_batch_result = self._process_single_batch(model, first_batch)
 
         # Now we know actual dimensions - get proper feature names
         metadata = self.feature_set.get_metadata()
         actual_feature_names = metadata.feature_names
 
-        logger.info(f"Discovered {len(actual_feature_names)} features: {actual_feature_names[:5]}..." if len(actual_feature_names) > 5 else f"Discovered features: {actual_feature_names}")
+        logger.info(
+            f"Discovered {len(actual_feature_names)} features: {actual_feature_names[:5]}..."
+            if len(actual_feature_names) > 5
+            else f"Discovered features: {actual_feature_names}"
+        )
 
         # Create feature key for this dataset
         model_name = self._get_model_name(model)
@@ -997,6 +1037,7 @@ class FeatureProcessor:
                 for idx, sample in enumerate(first_batch):
                     if hasattr(sample, "prompt") and hasattr(sample, "response"):
                         import hashlib
+
                         content = f"{sample.prompt}|{sample.response}"
                         hash_val = hashlib.sha256(content.encode()).hexdigest()[:16]
                     else:
@@ -1024,7 +1065,12 @@ class FeatureProcessor:
                 if remaining_samples:
                     iterator = range(0, len(remaining_samples), self.batch_size)
                     if self.show_progress:
-                        iterator = tqdm(iterator, desc="Streaming remaining batches", initial=1, total=len(iterator)+1)
+                        iterator = tqdm(
+                            iterator,
+                            desc="Streaming remaining batches",
+                            initial=1,
+                            total=len(iterator) + 1,
+                        )
 
                     for i in iterator:
                         batch = remaining_samples[i : i + self.batch_size]
@@ -1046,10 +1092,15 @@ class FeatureProcessor:
 
                         # Generate sample hashes and indices
                         for idx, sample in enumerate(batch):
-                            if hasattr(sample, "prompt") and hasattr(sample, "response"):
+                            if hasattr(sample, "prompt") and hasattr(
+                                sample, "response"
+                            ):
                                 import hashlib
+
                                 content = f"{sample.prompt}|{sample.response}"
-                                hash_val = hashlib.sha256(content.encode()).hexdigest()[:16]
+                                hash_val = hashlib.sha256(content.encode()).hexdigest()[
+                                    :16
+                                ]
                             else:
                                 hash_val = f"sample_{total_processed + idx}"
                             batch_hashes.append(hash_val)
@@ -1072,6 +1123,7 @@ class FeatureProcessor:
                         # More frequent garbage collection to prevent memory accumulation
                         if total_processed % (self.batch_size * 10) == 0:
                             import gc
+
                             gc.collect()
                             if torch.cuda.is_available():
                                 torch.cuda.empty_cache()
@@ -1137,7 +1189,9 @@ class FeatureProcessor:
 
         else:
             # Legacy path: extract attention for attention processors
-            attention_matrices, attention_type = self._extract_attention_batch(model, batch)
+            attention_matrices, attention_type = self._extract_attention_batch(
+                model, batch
+            )
 
             # Create AttentionData
             attention_data = AttentionData(

@@ -212,7 +212,9 @@ class FileFeatureStore(IFeatureStore):
                         if features_col.type == pa.binary():
                             # NEW format - binary data (optimized)
                             # Get metadata for reconstruction
-                            dtype = np.dtype(table.schema.metadata[b"features_dtype"].decode())
+                            dtype = np.dtype(
+                                table.schema.metadata[b"features_dtype"].decode()
+                            )
                             eval(table.schema.metadata[b"features_shape"].decode())
 
                             # Reconstruct features from binary

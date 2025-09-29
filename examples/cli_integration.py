@@ -60,7 +60,7 @@ class SimpleLaplacianExtractor:
                     # Take top k eigenvalues
                     top_k = min(self.num_eigenvalues, len(eigenvalues))
                     features.extend(eigenvalues[:top_k].tolist())
-                except:
+                except Exception:
                     # Fallback if eigendecomposition fails
                     features.extend([0.0] * self.num_eigenvalues)
 
@@ -70,8 +70,8 @@ class SimpleLaplacianExtractor:
 
         # Generate feature names
         feature_names = [
-            f"L{l}_H{h}_eig{i}"
-            for l in range(layers)
+            f"L{layer}_H{h}_eig{i}"
+            for layer in range(layers)
             for h in range(heads)
             for i in range(self.num_eigenvalues)
         ][: len(features_tensor)]
