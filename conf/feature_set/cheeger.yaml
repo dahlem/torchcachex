@@ -7,4 +7,5 @@ description: "Cheeger bound-based feature extraction"
 extractors:
   _target_: shade.detectors.feature_extractors.cheeger.CheegerFeatureExtractor
   include_violations: true
+  compute_self_normalization: true  # Enable R_tilde_ratio, R_uniform_ratio for zero-shot detector
   aggregation: concat
