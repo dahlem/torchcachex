@@ -231,6 +231,9 @@ class FeatureProcessor:
                 gc.collect()
                 if torch.cuda.is_available():
                     torch.cuda.empty_cache()
+                # Clear MPS cache on Apple Silicon
+                if torch.backends.mps.is_available():
+                    torch.mps.empty_cache()
 
         # Combine all batches
         if all_features:
@@ -737,6 +740,15 @@ class FeatureProcessor:
         import tempfile
 
         chunk_size = self.max_samples_in_memory
+
+        # Reduce chunk size for MPS (Apple Silicon) due to limited memory
+        if torch.backends.mps.is_available() and chunk_size > 1000:
+            original_size = chunk_size
+            chunk_size = 1000
+            logger.info(
+                f"Reduced chunk size from {original_size} to {chunk_size} for MPS device"
+            )
+
         n_chunks = (len(samples) + chunk_size - 1) // chunk_size
 
         logger.info(
@@ -912,9 +924,13 @@ class FeatureProcessor:
             # Clear batch result to free memory
             del batch_result
 
-            # Force garbage collection more frequently in chunks
-            if (batch_idx + 1) % 5 == 0:
+            # Force garbage collection more frequently in chunks (every 2 batches for MPS)
+            gc_frequency = 2 if torch.backends.mps.is_available() else 5
+            if (batch_idx + 1) % gc_frequency == 0:
                 gc.collect()
+                # Clear MPS cache on Apple Silicon
+                if torch.backends.mps.is_available():
+                    torch.mps.empty_cache()
 
         # Combine chunk results
         if all_features:
