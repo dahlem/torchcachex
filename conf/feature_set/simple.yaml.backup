@@ -1,7 +1,0 @@
-# Simple feature set configuration
-_target_: shade_io.SimpleFeatureSet
-name: simple_features
-description: "Basic feature extraction"
-
-# Feature extractors (to be provided by user)
-extractors: ???

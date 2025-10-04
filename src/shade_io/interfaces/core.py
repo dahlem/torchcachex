@@ -81,9 +81,18 @@ class FeatureResult:
 
     @property
     def feature_dim(self) -> int:
-        """Get feature dimension."""
+        """Get feature dimension.
+
+        Handles both aggregated 2D tensors (batch, n_features) and
+        unaggregated 3D tensors (batch, n_matrices, n_features).
+        """
         if self.features.dim() == 2:
+            # 2D: (batch, n_features) -> return n_features
             return self.features.shape[1]
+        elif self.features.dim() == 3:
+            # 3D: (batch, n_matrices, n_features) -> return n_features
+            return self.features.shape[2]
+        # 1D or other: return first dimension
         return self.features.shape[0]
 
     def __post_init__(self):

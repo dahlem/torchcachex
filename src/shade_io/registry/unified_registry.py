@@ -115,7 +115,7 @@ class StorageManager:
 
     # Supported feature storage formats
     SUPPORTED_FORMATS = {
-        "arrow": ".arrow",  # Apache Arrow format (memory-mapped, optimized)
+        "parquet": ".parquet",  # Parquet format (columnar, compressed)
         "torch": ".pt",  # PyTorch native format
     }
 
@@ -124,7 +124,7 @@ class StorageManager:
         features: np.ndarray,
         labels: np.ndarray,
         file_path: Path,
-        format: str = "arrow",
+        format: str = "parquet",
         metadata: dict | None = None,
         hash_ids: list[str] | None = None,
         splits: list[str] | None = None,
@@ -133,7 +133,7 @@ class StorageManager:
         file_path = Path(file_path)
         file_path.parent.mkdir(parents=True, exist_ok=True)
 
-        if format == "arrow":
+        if format == "parquet":
             import pyarrow as pa
             import pyarrow.parquet as pq
 
@@ -164,21 +164,35 @@ class StorageManager:
             # Use the same metadata schema as convert_cache.py
             import json
 
-            metadata_dict = {
-                "feature_dim": str(features.shape[1]),
-                "feature_names": json.dumps(
-                    metadata.get(
-                        "feature_names",
-                        [f"feature_{i}" for i in range(features.shape[1])],
-                    )
-                )
-                if metadata
-                else json.dumps([f"feature_{i}" for i in range(features.shape[1])]),
-                "source_file": metadata.get("source_file", "unknown")
-                if metadata
-                else "unknown",
-                "original_shape": f"{features.shape[0]}x{features.shape[1]}",
-            }
+            # Build metadata based on feature dimensionality
+            metadata_dict = {}
+
+            if features.ndim == 2:
+                # 2D features: (n_samples, n_features)
+                metadata_dict["ndim"] = "2"
+                metadata_dict["feature_dim"] = str(features.shape[1])
+                metadata_dict["original_shape"] = f"{features.shape[0]}x{features.shape[1]}"
+                default_names = [f"feature_{i}" for i in range(features.shape[1])]
+            elif features.ndim == 3:
+                # 3D features: (n_samples, n_matrices, n_features_per_matrix)
+                metadata_dict["ndim"] = "3"
+                metadata_dict["n_matrices"] = str(features.shape[1])
+                metadata_dict["n_features_per_matrix"] = str(features.shape[2])
+                metadata_dict["feature_shape"] = f"{features.shape[1]}x{features.shape[2]}"
+                metadata_dict["original_shape"] = f"{features.shape[0]}x{features.shape[1]}x{features.shape[2]}"
+                # For 3D, feature_names are per-matrix features (not including matrix dimension)
+                default_names = [f"feature_{i}" for i in range(features.shape[2])]
+            else:
+                # Fallback for other dimensions
+                metadata_dict["ndim"] = str(features.ndim)
+                metadata_dict["feature_shape"] = "x".join(str(s) for s in features.shape[1:])
+                metadata_dict["original_shape"] = "x".join(str(s) for s in features.shape)
+                default_names = [f"feature_{i}" for i in range(features.shape[-1])]
+
+            metadata_dict["feature_names"] = json.dumps(
+                metadata.get("feature_names", default_names) if metadata else default_names
+            )
+            metadata_dict["source_file"] = metadata.get("source_file", "unknown") if metadata else "unknown"
             # Convert to bytes for Arrow
             table_metadata = {
                 k.encode(): v.encode() if isinstance(v, str) else v
@@ -211,16 +225,20 @@ class StorageManager:
         # Auto-detect format from extension
         if format is None:
             ext = file_path.suffix
-            format = next(
-                (
-                    name
-                    for name, fext in StorageManager.SUPPORTED_FORMATS.items()
-                    if fext == ext
-                ),
-                "arrow",
-            )
+            # Map both .parquet and .arrow to parquet format
+            if ext in [".parquet", ".arrow"]:
+                format = "parquet"
+            else:
+                format = next(
+                    (
+                        name
+                        for name, fext in StorageManager.SUPPORTED_FORMATS.items()
+                        if fext == ext
+                    ),
+                    "parquet",
+                )
 
-        if format == "arrow":
+        if format == "parquet":
             import pyarrow as pa
             import pyarrow.parquet as pq
 
@@ -857,7 +875,7 @@ class UnifiedRegistry:
         dataset_cfg: DictConfig | dict,
         feature_set_cfg: DictConfig | dict,
         metadata: dict[str, Any] | None = None,
-        format: str = "arrow",
+        format: str = "parquet",
         hash_ids: list[str] | None = None,
         splits: list[str] | None = None,
         feature_names: list[str] | None = None,
@@ -871,7 +889,7 @@ class UnifiedRegistry:
             dataset_cfg: Dataset configuration
             feature_set_cfg: Feature set configuration
             metadata: Additional metadata to store
-            format: Storage format (arrow, torch)
+            format: Storage format (parquet, torch)
             hash_ids: Hash IDs for each sample (for split tracking)
             splits: Split assignments for each sample
             feature_names: Names of features (meaningful names like L0_H0_λ_1)
@@ -883,9 +901,21 @@ class UnifiedRegistry:
         config_key = self._extract_config_key(model_cfg, dataset_cfg, feature_set_cfg)
 
         # Add data statistics
+        # Handle both 2D (n_samples, n_features) and 3D (n_samples, n_matrices, n_features) arrays
+        if features.ndim == 2:
+            feature_info = {"feature_dim": features.shape[1]}
+        elif features.ndim == 3:
+            feature_info = {
+                "feature_shape": features.shape[1:],  # (n_matrices, n_features)
+                "n_matrices": features.shape[1],
+                "n_features_per_matrix": features.shape[2],
+            }
+        else:
+            feature_info = {"feature_shape": features.shape[1:]}
+
         config_key["data"] = {
             "n_samples": len(features),
-            "feature_dim": features.shape[1],
+            **feature_info,
             "label_distribution": {
                 str(int(label)): int(np.sum(labels == label))
                 for label in np.unique(labels)
@@ -938,10 +968,17 @@ class UnifiedRegistry:
         # Save registry
         self._save_json(self.features_registry, self.features_registry_file)
 
+        # Handle both 2D (feature_dim) and 3D (feature_shape) cases for logging
+        if "feature_dim" in config_key["data"]:
+            feature_info = f"{config_key['data']['feature_dim']} dims"
+        else:
+            shape = config_key["data"]["feature_shape"]
+            feature_info = f"shape {tuple(shape)}"
+
         logger.info(
             f"Registered features as: {descriptive_name} "
             f"({config_key['data']['n_samples']} samples, "
-            f"{config_key['data']['feature_dim']} dims, {format} format)"
+            f"{feature_info}, {format} format)"
         )
 
         return feature_id
@@ -1258,10 +1295,34 @@ class UnifiedRegistry:
         if "hash_id" in table.column_names:
             metadata["hash_ids"] = table["hash_id"].to_pylist()
 
-        # Extract feature names from schema metadata
-        if b"feature_names" in table.schema.metadata:
-            feature_names_json = table.schema.metadata[b"feature_names"].decode()
-            metadata["feature_names"] = json.loads(feature_names_json)
+        # Extract feature names and shape metadata from schema metadata
+        if table.schema.metadata:
+            if b"feature_names" in table.schema.metadata:
+                feature_names_json = table.schema.metadata[b"feature_names"].decode()
+                metadata["feature_names"] = json.loads(feature_names_json)
+
+            # Auto-reshape based on metadata if 3D
+            schema_meta = {k.decode(): v.decode() for k, v in table.schema.metadata.items()}
+            ndim = schema_meta.get("ndim")
+
+            if ndim == "3":
+                # Store shape info in metadata
+                metadata["n_matrices"] = int(schema_meta.get("n_matrices", 0))
+                metadata["n_features_per_matrix"] = int(schema_meta.get("n_features_per_matrix", 0))
+
+                # Reshape from (n_samples, n_total_features) to (n_samples, n_matrices, n_features_per_matrix)
+                n_matrices = metadata["n_matrices"]
+                n_features_per_matrix = metadata["n_features_per_matrix"]
+
+                if n_matrices > 0 and n_features_per_matrix > 0:
+                    expected_size = n_matrices * n_features_per_matrix
+                    if features.shape[1] == expected_size:
+                        features = features.reshape(-1, n_matrices, n_features_per_matrix)
+                    else:
+                        logger.warning(
+                            f"Cannot reshape: expected {expected_size} features "
+                            f"({n_matrices} × {n_features_per_matrix}), got {features.shape[1]}"
+                        )
 
         return features, labels, metadata
 
@@ -1300,23 +1361,23 @@ class UnifiedRegistry:
             logger.warning("No split config provided, returning all features")
             return self.load_features(match.feature_id)
 
-        # Check if this is an Arrow file with split support
+        # Check if this is a Parquet file with split support
         file_path = Path(match.file_path)
-        if file_path.suffix == ".arrow":
-            return self._load_arrow_split(file_path, split, split_config)
+        if file_path.suffix in [".parquet", ".arrow"]:
+            return self._load_parquet_split(file_path, split, split_config)
         else:
             # For other formats, need to load all and split
             logger.warning(
                 f"Split filtering for {file_path.suffix} requires loading all data"
             )
             features, labels = self.load_features(match.feature_id)
-            # TODO: Implement proper split filtering for non-Arrow formats
+            # TODO: Implement proper split filtering for non-Parquet formats
             return features, labels
 
-    def _load_arrow_split(
+    def _load_parquet_split(
         self, file_path: Path, split: str, split_config: dict[str, Any]
     ) -> tuple[np.ndarray, np.ndarray]:
-        """Load a specific split from an Arrow file."""
+        """Load a specific split from a Parquet/Arrow file."""
         import pyarrow as pa
         import pyarrow.compute as pc
         import pyarrow.parquet as pq
@@ -1372,6 +1433,26 @@ class UnifiedRegistry:
                 features = np.array(df["features"].tolist())
         else:
             features = np.array(df["features"].tolist())
+
+        # Auto-reshape based on metadata if 3D
+        if filtered_table.schema.metadata:
+            schema_meta = {k.decode(): v.decode() for k, v in filtered_table.schema.metadata.items()}
+            ndim = schema_meta.get("ndim")
+
+            if ndim == "3":
+                # Reshape from (n_samples, n_total_features) to (n_samples, n_matrices, n_features_per_matrix)
+                n_matrices = int(schema_meta.get("n_matrices", 0))
+                n_features_per_matrix = int(schema_meta.get("n_features_per_matrix", 0))
+
+                if n_matrices > 0 and n_features_per_matrix > 0:
+                    expected_size = n_matrices * n_features_per_matrix
+                    if features.shape[1] == expected_size:
+                        features = features.reshape(-1, n_matrices, n_features_per_matrix)
+                    else:
+                        logger.warning(
+                            f"Cannot reshape: expected {expected_size} features "
+                            f"({n_matrices} × {n_features_per_matrix}), got {features.shape[1]}"
+                        )
 
         labels = np.array(df["label"])
 
