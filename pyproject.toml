@@ -1,41 +1,38 @@
 [build-system]
-requires = ["setuptools>=61.0", "wheel"]
-build-backend = "setuptools.build_meta"
+requires = ["hatchling"]
+build-backend = "hatchling.build"
 
 [project]
-name = "shade-io"
+name = "torchcachex"
 version = "0.1.0"
-description = "Modular I/O layer for SHADE feature extraction and caching"
+description = "Drop-in PyTorch module caching with HuggingFace Datasets backend"
 readme = "README.md"
 requires-python = ">=3.10"
 license = {text = "MIT"}
 authors = [
-    {name = "SHADE Team", email = "shade@example.com"},
+    {name = "Dominik Dahlem", email = "dominik.dahlem@gmail.com"},
 ]
-keywords = ["machine learning", "feature extraction", "caching", "attention analysis"]
+keywords = ["machine learning", "caching", "pytorch", "huggingface", "performance"]
 classifiers = [
-    "Development Status :: 3 - Alpha",
+    "Development Status :: 4 - Beta",
     "Intended Audience :: Science/Research",
+    "Intended Audience :: Developers",
     "License :: OSI Approved :: MIT License",
     "Programming Language :: Python :: 3",
     "Programming Language :: Python :: 3.10",
     "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",
     "Topic :: Scientific/Engineering :: Artificial Intelligence",
+    "Topic :: Software Development :: Libraries :: Python Modules",
 ]
 
 dependencies = [
     "torch>=2.0.0",
-    "numpy>=1.21.0",
-    "tqdm>=4.62.0",
-    "omegaconf>=2.3.0",
-    "hydra-core>=1.3.0",
+    "pyarrow>=14.0.0",
+    "cachetools>=5.0.0",
 ]
 
 [project.optional-dependencies]
-arrow = [
-    "pyarrow>=10.0.0",
-]
 dev = [
     "pytest>=7.0.0",
     "pytest-cov>=3.0.0",
@@ -44,24 +41,28 @@ dev = [
     "isort>=5.12.0",
     "mypy>=1.0.0",
 ]
-all = [
-    "shade-io[arrow,dev]",
-]
 
 [project.urls]
-Homepage = "https://github.com/shade-project/shade-io"
-Documentation = "https://shade-io.readthedocs.io"
-Repository = "https://github.com/shade-project/shade-io"
+Homepage = "https://github.com/dahlem/torchcachex"
+Documentation = "https://github.com/dahlem/torchcachex"
+Repository = "https://github.com/dahlem/torchcachex"
 
-[tool.setuptools.packages.find]
-where = ["src"]
+[tool.hatch.build.targets.wheel]
+packages = ["src/torchcachex"]
 
-[tool.setuptools.package-data]
-shade_io = ["py.typed"]
+[tool.hatch.build.targets.sdist]
+include = [
+    "/src",
+    "/tests",
+    "/README.md",
+    "/LICENSE",
+]
 
 [tool.ruff]
 line-length = 88
 target-version = "py310"
+
+[tool.ruff.lint]
 select = [
     "E",    # pycodestyle errors
     "W",    # pycodestyle warnings
@@ -77,13 +78,13 @@ ignore = [
     "C901", # too complex
 ]
 
-[tool.ruff.isort]
-known-first-party = ["shade_io"]
+[tool.ruff.lint.isort]
+known-first-party = ["torchcachex"]
 
 [tool.isort]
 profile = "black"
 line_length = 88
-known_first_party = ["shade_io"]
+known_first_party = ["torchcachex"]
 
 [tool.mypy]
 python_version = "3.10"
@@ -96,12 +97,10 @@ python_files = ["test_*.py"]
 python_functions = ["test_*"]
 addopts = [
     "--verbose",
-    "--cov=shade_io",
-    "--cov-report=term-missing",
 ]
 
 [tool.coverage.run]
-source = ["shade_io"]
+source = ["torchcachex"]
 omit = [
     "*/tests/*",
     "*/__pycache__/*",
