@@ -13,6 +13,8 @@ env/
 # Cache directories
 .cache/
 *.cache
+.ruff_cache/
+.deepeval/
 
 # Output directories
 outputs/
