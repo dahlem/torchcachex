@@ -105,9 +105,7 @@ def benchmark_write_scaling(tmpdir: str) -> List[BenchmarkResult]:
 
         for batch in loader:
             out = module(batch["input"])
-            backend.put_batch(
-                {cid: out[i] for i, cid in enumerate(batch["cache_ids"])}
-            )
+            backend.put_batch({cid: out[i] for i, cid in enumerate(batch["cache_ids"])})
         backend.flush()
 
         # Now benchmark writing 1000 new samples
@@ -162,7 +160,7 @@ def benchmark_read_performance(tmpdir: str) -> List[BenchmarkResult]:
         import random
 
         random.seed(42)
-        read_keys = [f"key_{random.randint(0, size-1)}" for _ in range(1000)]
+        read_keys = [f"key_{random.randint(0, size - 1)}" for _ in range(1000)]
 
         start = time.time()
         results_data, missing = backend.get_batch(read_keys)
@@ -232,7 +230,7 @@ def benchmark_memory_usage(tmpdir: str) -> List[BenchmarkResult]:
                 metric=f"Cache size: {size}",
                 value=mem_increase,
                 unit="MB",
-                details=f"{mem_increase/size*1024:.2f} KB/sample",
+                details=f"{mem_increase / size * 1024:.2f} KB/sample",
             )
         )
 
@@ -278,9 +276,7 @@ def benchmark_cache_speedup(tmpdir: str) -> List[BenchmarkResult]:
     backend.flush()
     time_epoch1 = time.time() - start
 
-    print(
-        f"    Time: {time_epoch1:.3f}s, Module calls: {module_cached.call_count}"
-    )
+    print(f"    Time: {time_epoch1:.3f}s, Module calls: {module_cached.call_count}")
 
     # Benchmark WITH caching (second epoch - cache hits)
     print(f"  Running WITH cache (epoch 2 - cache hits)...")
@@ -310,7 +306,7 @@ def benchmark_cache_speedup(tmpdir: str) -> List[BenchmarkResult]:
                 metric="Epoch 1 (populate)",
                 value=time_epoch1,
                 unit="seconds",
-                details=f"Overhead: {(time_epoch1/time_nocache - 1)*100:.1f}%",
+                details=f"Overhead: {(time_epoch1 / time_nocache - 1) * 100:.1f}%",
             ),
             BenchmarkResult(
                 name="Cache Speedup",
@@ -424,7 +420,11 @@ def benchmark_dtype_preservation(tmpdir: str) -> List[BenchmarkResult]:
         )
 
         # Write tensor with specific dtype
-        tensor_in = torch.randn(512).to(dtype) if dtype.is_floating_point else torch.randint(0, 100, (512,)).to(dtype)
+        tensor_in = (
+            torch.randn(512).to(dtype)
+            if dtype.is_floating_point
+            else torch.randint(0, 100, (512,)).to(dtype)
+        )
         backend.put_batch({"key": tensor_in})
         backend.flush()
 
@@ -490,15 +490,11 @@ def generate_markdown_report(all_results: List[BenchmarkResult], output_file: st
                 times = [r.value for r in results]
                 avg_time = sum(times) / len(times)
                 variance = sum((t - avg_time) ** 2 for t in times) / len(times)
-                cv = (variance ** 0.5) / avg_time  # Coefficient of variation
+                cv = (variance**0.5) / avg_time  # Coefficient of variation
 
                 f.write("**Interpretation:**\n")
-                f.write(
-                    f"- Average flush time: {avg_time:.3f}s (across cache sizes)\n"
-                )
-                f.write(
-                    f"- Coefficient of variation: {cv:.2f} (lower is better)\n"
-                )
+                f.write(f"- Average flush time: {avg_time:.3f}s (across cache sizes)\n")
+                f.write(f"- Coefficient of variation: {cv:.2f} (lower is better)\n")
                 if cv < 0.3:
                     f.write(
                         "- ✅ **O(1) confirmed**: Flush time independent of cache size\n"
@@ -551,7 +547,9 @@ def generate_markdown_report(all_results: List[BenchmarkResult], output_file: st
         mem_results = grouped.get("Memory Usage", [])
         if mem_results:
             per_sample = [
-                float(r.details.split()[0]) for r in mem_results if "KB/sample" in r.details
+                float(r.details.split()[0])
+                for r in mem_results
+                if "KB/sample" in r.details
             ]
             avg_per_sample = sum(per_sample) / len(per_sample)
             f.write(
@@ -566,9 +564,7 @@ def generate_markdown_report(all_results: List[BenchmarkResult], output_file: st
             no_cache = next(
                 (r for r in speedup_results if "No cache" in r.metric), None
             )
-            cached = next(
-                (r for r in speedup_results if "Epoch 2" in r.metric), None
-            )
+            cached = next((r for r in speedup_results if "Epoch 2" in r.metric), None)
             if no_cache and cached:
                 speedup = no_cache.value / cached.value
                 f.write(f"{speedup:.1f}x speedup on cached epochs\n")
@@ -601,9 +597,7 @@ def generate_markdown_report(all_results: List[BenchmarkResult], output_file: st
 
 
 def main():
-    parser = argparse.ArgumentParser(
-        description="Benchmark torchcachex performance"
-    )
+    parser = argparse.ArgumentParser(description="Benchmark torchcachex performance")
     parser.add_argument(
         "--output",
         default="BENCHMARK.md",

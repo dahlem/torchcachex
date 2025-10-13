@@ -77,7 +77,9 @@ class TestBackendBasics:
             backend.flush()
 
             # Get mix of existing and missing
-            results, missing = backend.get_batch(["key1", "missing1", "key2", "missing2"])
+            results, missing = backend.get_batch(
+                ["key1", "missing1", "key2", "missing2"]
+            )
             assert missing == [1, 3]
             assert results[0] is not None
             assert results[1] is None

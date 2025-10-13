@@ -2,6 +2,7 @@
 
 Tests that verify O(1) performance characteristics with large caches.
 """
+
 import tempfile
 import time
 
@@ -47,9 +48,9 @@ class TestScalePerformance:
             avg_early = sum(flush_times[:3]) / 3
             avg_late = sum(flush_times[-3:]) / 3
 
-            assert (
-                avg_late < avg_early * 2.0
-            ), f"Flush time grew too much: {avg_early:.4f}s -> {avg_late:.4f}s"
+            assert avg_late < avg_early * 2.0, (
+                f"Flush time grew too much: {avg_early:.4f}s -> {avg_late:.4f}s"
+            )
 
     def test_large_cache_operations(self):
         """Test cache with 10k samples."""
@@ -63,7 +64,9 @@ class TestScalePerformance:
 
             # Write 10k samples in batches
             for i in range(100):
-                batch = {f"key_{j}": torch.randn(50) for j in range(i * 100, (i + 1) * 100)}
+                batch = {
+                    f"key_{j}": torch.randn(50) for j in range(i * 100, (i + 1) * 100)
+                }
                 backend.put_batch(batch)
                 if (i + 1) % 10 == 0:  # Flush every 1000 samples
                     backend.flush()
@@ -81,7 +84,7 @@ class TestScalePerformance:
 
     @pytest.mark.skipif(
         not pytest.importorskip("psutil", reason="psutil not installed"),
-        reason="psutil required for memory tests"
+        reason="psutil required for memory tests",
     )
     def test_memory_usage_constant_during_flush(self):
         """Test that memory usage doesn't grow with cache size during flush."""
@@ -101,7 +104,9 @@ class TestScalePerformance:
 
             # Populate with 5k samples
             for i in range(10):
-                batch = {f"key_{j}": torch.randn(100) for j in range(i * 500, (i + 1) * 500)}
+                batch = {
+                    f"key_{j}": torch.randn(100) for j in range(i * 500, (i + 1) * 500)
+                }
                 backend.put_batch(batch)
                 backend.flush()
 
@@ -118,7 +123,9 @@ class TestScalePerformance:
             # Memory increase should be small (< 50MB) even with 5k existing samples
             mem_increase = mem_after - mem_before
             print(f"Memory increase during flush: {mem_increase:.2f} MB")
-            assert mem_increase < 50, f"Memory increased by {mem_increase:.2f} MB during flush"
+            assert mem_increase < 50, (
+                f"Memory increased by {mem_increase:.2f} MB during flush"
+            )
 
     def test_many_segments_read_performance(self):
         """Test read performance with many small segments."""
@@ -132,12 +139,16 @@ class TestScalePerformance:
 
             # Create 100 segments (5000 samples)
             for i in range(100):
-                batch = {f"key_{j}": torch.randn(20) for j in range(i * 50, (i + 1) * 50)}
+                batch = {
+                    f"key_{j}": torch.randn(20) for j in range(i * 50, (i + 1) * 50)
+                }
                 backend.put_batch(batch)
                 backend.flush()
 
             # Read should still be fast even with 100 segments
-            keys = [f"key_{i}" for i in range(0, 5000, 50)]  # Sample across all segments
+            keys = [
+                f"key_{i}" for i in range(0, 5000, 50)
+            ]  # Sample across all segments
 
             start = time.time()
             results, missing = backend.get_batch(keys)
@@ -159,7 +170,9 @@ class TestScalePerformance:
 
             # Populate cache
             for i in range(cache_size // 100):
-                batch = {f"key_{j}": torch.randn(50) for j in range(i * 100, (i + 1) * 100)}
+                batch = {
+                    f"key_{j}": torch.randn(50) for j in range(i * 100, (i + 1) * 100)
+                }
                 backend.put_batch(batch)
                 if (i + 1) % 10 == 0:
                     backend.flush()
@@ -189,9 +202,7 @@ class TestLargeDataTypes:
             )
 
             # Simulate ResNet50 features: (B, 2048, 7, 7)
-            large_tensors = {
-                f"key_{i}": torch.randn(2048, 7, 7) for i in range(20)
-            }
+            large_tensors = {f"key_{i}": torch.randn(2048, 7, 7) for i in range(20)}
 
             backend.put_batch(large_tensors)
             backend.flush()
@@ -260,7 +271,9 @@ class TestConcurrentAccess:
                 backend.executor.shutdown(wait=True)
 
             # Verify new data is also accessible
-            results2, missing2 = backend.get_batch([f"key_{i}" for i in range(500, 510)])
+            results2, missing2 = backend.get_batch(
+                [f"key_{i}" for i in range(500, 510)]
+            )
             assert len(missing2) == 0
 
 

@@ -2,6 +2,7 @@
 
 Tests that verify data integrity and crash recovery mechanisms.
 """
+
 import shutil
 import tempfile
 from pathlib import Path
@@ -151,9 +152,7 @@ class TestDataIntegrity:
 
             # Write in multiple batches
             for round_idx in range(10):
-                batch = {
-                    f"key_{round_idx}_{i}": torch.randn(20) for i in range(15)
-                }
+                batch = {f"key_{round_idx}_{i}": torch.randn(20) for i in range(15)}
                 all_data.update(batch)
                 backend.put_batch(batch)
                 backend.flush()
@@ -204,7 +203,9 @@ class TestDataIntegrity:
 
             # Write multiple batches
             for i in range(5):
-                batch = {f"key_{j}": torch.randn(15) for j in range(i * 20, (i + 1) * 20)}
+                batch = {
+                    f"key_{j}": torch.randn(15) for j in range(i * 20, (i + 1) * 20)
+                }
                 backend.put_batch(batch)
                 backend.flush()
 
@@ -219,6 +220,7 @@ class TestDataIntegrity:
             total_rows = 0
             for seg_file in segment_files:
                 import pyarrow as pa
+
                 with pa.memory_map(str(seg_file), "r") as source:
                     reader = pa.ipc.open_file(source)
                     table = reader.read_all()

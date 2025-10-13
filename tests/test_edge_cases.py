@@ -2,6 +2,7 @@
 
 Tests targeting uncovered lines in backend.py, decorator.py, and utils.py.
 """
+
 import tempfile
 from pathlib import Path
 
@@ -206,7 +207,9 @@ class TestBackendEdgeCases:
             backend.flush()  # Should return early
 
             # No segments should be created
-            segments = list((Path(tmpdir) / "test" / "segments").glob("segment_*.arrow"))
+            segments = list(
+                (Path(tmpdir) / "test" / "segments").glob("segment_*.arrow")
+            )
             assert len(segments) == 0
 
     def test_async_write_execution(self):
@@ -392,6 +395,7 @@ class TestSchemaEdgeCases:
             # Test with unknown type - should fall back to string
             result = backend._parse_arrow_type("unknown_type")
             import pyarrow as pa
+
             assert result == pa.string()
 
     def test_torch_to_arrow_dtype_fallback(self):
@@ -404,4 +408,5 @@ class TestSchemaEdgeCases:
             # Test with complex dtype (should fall back to float32)
             result = backend._torch_to_arrow_dtype(torch.complex64)
             import pyarrow as pa
+
             assert result == pa.float32()

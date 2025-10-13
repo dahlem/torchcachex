@@ -90,9 +90,7 @@ def example_kfold_cv():
     )
 
     feature_extractor = FeatureExtractor()
-    cached_extractor = CacheModuleDecorator(
-        feature_extractor, backend, enabled=True
-    )
+    cached_extractor = CacheModuleDecorator(feature_extractor, backend, enabled=True)
 
     for fold in range(num_folds):
         print(f"Fold {fold + 1}/{num_folds}")
@@ -141,9 +139,7 @@ def example_ddp_training():
     )
 
     feature_extractor = FeatureExtractor()
-    cached_extractor = CacheModuleDecorator(
-        feature_extractor, backend, enabled=True
-    )
+    cached_extractor = CacheModuleDecorator(feature_extractor, backend, enabled=True)
 
     dataset = ImageDataset(num_samples=100)
     loader = DataLoader(dataset, batch_size=32)
@@ -156,9 +152,7 @@ def example_ddp_training():
 
     backend.flush()
 
-    print(
-        f"Rank {rank}: Cache populated by rank 0, all ranks can read in next epoch\n"
-    )
+    print(f"Rank {rank}: Cache populated by rank 0, all ranks can read in next epoch\n")
 
 
 def example_multiple_models_shared_cache():
@@ -196,9 +190,7 @@ def example_multiple_models_shared_cache():
 
     # Create cached extractor
     feature_extractor = FeatureExtractor()
-    cached_extractor = CacheModuleDecorator(
-        feature_extractor, backend, enabled=True
-    )
+    cached_extractor = CacheModuleDecorator(feature_extractor, backend, enabled=True)
 
     # Both models use the same cached features!
     model_a = ModelA(cached_extractor)
@@ -247,7 +239,9 @@ def example_complex_outputs():
         spatial = outputs["spatial"]  # Spatial features
         stats = outputs["stats"]  # Statistics
 
-        print(f"  Features: {features.shape}, Spatial: {spatial.shape}, Stats: {stats.shape}")
+        print(
+            f"  Features: {features.shape}, Spatial: {spatial.shape}, Stats: {stats.shape}"
+        )
 
     backend.flush()
 

@@ -1,4 +1,5 @@
 """Integration tests for torchcachex end-to-end scenarios."""
+
 import tempfile
 
 import pytest
@@ -60,7 +61,9 @@ class TestFullTrainingLoop:
 
             # First epoch - all misses
             for batch in loader:
-                features = cached_extractor(batch["input"], cache_ids=batch["cache_ids"])
+                features = cached_extractor(
+                    batch["input"], cache_ids=batch["cache_ids"]
+                )
                 assert features is not None
 
             backend.flush()
@@ -87,7 +90,9 @@ class TestFullTrainingLoop:
             # First epoch
             epoch1_outputs = []
             for batch in loader:
-                features = cached_extractor(batch["input"], cache_ids=batch["cache_ids"])
+                features = cached_extractor(
+                    batch["input"], cache_ids=batch["cache_ids"]
+                )
                 epoch1_outputs.append(features)
 
             backend.flush()
@@ -96,7 +101,9 @@ class TestFullTrainingLoop:
             # Second epoch - should all be cache hits
             epoch2_outputs = []
             for batch in loader:
-                features = cached_extractor(batch["input"], cache_ids=batch["cache_ids"])
+                features = cached_extractor(
+                    batch["input"], cache_ids=batch["cache_ids"]
+                )
                 epoch2_outputs.append(features)
 
             # Module should not have been called again
@@ -127,7 +134,9 @@ class TestCrossRunCaching:
 
             run1_outputs = []
             for batch in loader:
-                features = cached_extractor1(batch["input"], cache_ids=batch["cache_ids"])
+                features = cached_extractor1(
+                    batch["input"], cache_ids=batch["cache_ids"]
+                )
                 run1_outputs.append(features)
 
             backend1.flush()
@@ -144,7 +153,9 @@ class TestCrossRunCaching:
 
             run2_outputs = []
             for batch in loader:
-                features = cached_extractor2(batch["input"], cache_ids=batch["cache_ids"])
+                features = cached_extractor2(
+                    batch["input"], cache_ids=batch["cache_ids"]
+                )
                 run2_outputs.append(features)
 
             # Module in second run should never be called

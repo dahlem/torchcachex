@@ -140,9 +140,7 @@ def main():
         print(f"  Average Loss: {avg_loss:.4f}\n")
 
     print("Training complete!")
-    print(
-        "\nNote: First epoch computed features, subsequent epochs used cache."
-    )
+    print("\nNote: First epoch computed features, subsequent epochs used cache.")
     print("Run this script again - all epochs will be fast (cache reused)!")
 
 

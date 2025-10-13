@@ -109,6 +109,7 @@ def _serialize_sample(obj: Any) -> bytes:
     Returns:
         Serialized bytes
     """
+
     def to_cpu(o: Any) -> Any:
         """Recursively move tensors to CPU."""
         if torch.is_tensor(o):

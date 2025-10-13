@@ -147,7 +147,10 @@ class TestDecoratorCacheIdExtraction:
             module = DictModule()
             cached = CacheModuleDecorator(module, backend, enabled=True)
 
-            batch = {"data": torch.randn(4, 10), "cache_ids": ["id1", "id2", "id3", "id4"]}
+            batch = {
+                "data": torch.randn(4, 10),
+                "cache_ids": ["id1", "id2", "id3", "id4"],
+            }
             out = cached(batch)
             backend.flush()
 
@@ -189,7 +192,9 @@ class TestDecoratorStatelessEnforcement:
 
             module = TrainableModule()
             module.train()  # Set to training mode
-            cached = CacheModuleDecorator(module, backend, enabled=True, enforce_stateless=True)
+            cached = CacheModuleDecorator(
+                module, backend, enabled=True, enforce_stateless=True
+            )
 
             x = torch.randn(4, 10)
             cache_ids = ["id1", "id2", "id3", "id4"]
@@ -214,7 +219,9 @@ class TestDecoratorStatelessEnforcement:
 
             module = TrainableModule()
             module.eval()  # Set to eval mode
-            cached = CacheModuleDecorator(module, backend, enabled=True, enforce_stateless=False)
+            cached = CacheModuleDecorator(
+                module, backend, enabled=True, enforce_stateless=False
+            )
 
             x = torch.randn(4, 10)
             cache_ids = ["id1", "id2", "id3", "id4"]
@@ -243,7 +250,9 @@ class TestDecoratorStateDict:
                     return self.linear(x)
 
             module = ModuleWithParams()
-            cached = CacheModuleDecorator(module, backend, enabled=True, enforce_stateless=False)
+            cached = CacheModuleDecorator(
+                module, backend, enabled=True, enforce_stateless=False
+            )
 
             state = cached.state_dict()
             # Should only have inner module's params

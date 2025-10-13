@@ -150,9 +150,7 @@ class ArrowIPCCacheBackend:
         )
 
         # Create index on segment_id for compaction queries (future)
-        conn.execute(
-            """CREATE INDEX IF NOT EXISTS idx_segment ON cache(segment_id)"""
-        )
+        conn.execute("""CREATE INDEX IF NOT EXISTS idx_segment ON cache(segment_id)""")
 
         conn.commit()
         return conn
@@ -179,7 +177,9 @@ class ArrowIPCCacheBackend:
         # Restore metadata (convert back to bytes keys for Arrow)
         if "metadata" in schema_dict:
             metadata_bytes = {
-                k.encode() if isinstance(k, str) else k: v.encode() if isinstance(v, str) else v
+                k.encode() if isinstance(k, str) else k: v.encode()
+                if isinstance(v, str)
+                else v
                 for k, v in schema_dict["metadata"].items()
             }
             schema = schema.with_metadata(metadata_bytes)
@@ -280,9 +280,7 @@ class ArrowIPCCacheBackend:
             )
             self.output_structure = "tensor"
             # Store original torch dtype in metadata
-            return pa.schema(fields).with_metadata(
-                {"torch_dtype": str(sample.dtype)}
-            )
+            return pa.schema(fields).with_metadata({"torch_dtype": str(sample.dtype)})
 
         elif isinstance(sample, dict):
             # Dict of tensors (most common!)
@@ -338,7 +336,11 @@ class ArrowIPCCacheBackend:
 
         elif self.output_structure == "dict":
             # Access metadata (handle both bytes and str keys)
-            metadata_key = b"tensor_keys" if b"tensor_keys" in self.schema.metadata else "tensor_keys"
+            metadata_key = (
+                b"tensor_keys"
+                if b"tensor_keys" in self.schema.metadata
+                else "tensor_keys"
+            )
             tensor_keys_str = self.schema.metadata[metadata_key]
             if isinstance(tensor_keys_str, bytes):
                 tensor_keys_str = tensor_keys_str.decode()
@@ -356,7 +358,9 @@ class ArrowIPCCacheBackend:
         elif self.output_structure in ("tuple", "list"):
             for i, item in enumerate(sample):
                 if torch.is_tensor(item):
-                    row[f"item{i}_data"] = item.detach().cpu().flatten().numpy().tolist()
+                    row[f"item{i}_data"] = (
+                        item.detach().cpu().flatten().numpy().tolist()
+                    )
                     row[f"item{i}_shape"] = list(item.shape)
                 else:
                     row[f"item{i}_blob"] = pickle.dumps(item)
@@ -374,7 +378,11 @@ class ArrowIPCCacheBackend:
         if self.output_structure == "tensor":
             # Row data is already numpy array from Arrow (dtype preserved)
             # Make a copy to ensure writability (Arrow memory-maps are read-only)
-            data = row["data"] if isinstance(row["data"], np.ndarray) else np.array(row["data"])
+            data = (
+                row["data"]
+                if isinstance(row["data"], np.ndarray)
+                else np.array(row["data"])
+            )
             data = np.array(data, copy=True) if not data.flags.writeable else data
             shape = tuple(row["shape"])
             tensor = torch.from_numpy(data).reshape(shape)
@@ -383,7 +391,11 @@ class ArrowIPCCacheBackend:
         elif self.output_structure == "dict":
             result = {}
             # Access metadata (handle both bytes and str keys)
-            metadata_key = b"tensor_keys" if b"tensor_keys" in self.schema.metadata else "tensor_keys"
+            metadata_key = (
+                b"tensor_keys"
+                if b"tensor_keys" in self.schema.metadata
+                else "tensor_keys"
+            )
             tensor_keys_str = self.schema.metadata[metadata_key]
             if isinstance(tensor_keys_str, bytes):
                 tensor_keys_str = tensor_keys_str.decode()
@@ -392,7 +404,11 @@ class ArrowIPCCacheBackend:
             for name in tensor_keys:
                 # Row data is already numpy array from Arrow (dtype preserved)
                 # Make a copy to ensure writability (Arrow memory-maps are read-only)
-                data = row[f"{name}_data"] if isinstance(row[f"{name}_data"], np.ndarray) else np.array(row[f"{name}_data"])
+                data = (
+                    row[f"{name}_data"]
+                    if isinstance(row[f"{name}_data"], np.ndarray)
+                    else np.array(row[f"{name}_data"])
+                )
                 data = np.array(data, copy=True) if not data.flags.writeable else data
                 shape = tuple(row[f"{name}_shape"])
                 tensor = torch.from_numpy(data).reshape(shape).to(map_location)
@@ -411,8 +427,14 @@ class ArrowIPCCacheBackend:
                 if f"item{i}_data" in row:
                     # Row data is already numpy array from Arrow (dtype preserved)
                     # Make a copy to ensure writability (Arrow memory-maps are read-only)
-                    data = row[f"item{i}_data"] if isinstance(row[f"item{i}_data"], np.ndarray) else np.array(row[f"item{i}_data"])
-                    data = np.array(data, copy=True) if not data.flags.writeable else data
+                    data = (
+                        row[f"item{i}_data"]
+                        if isinstance(row[f"item{i}_data"], np.ndarray)
+                        else np.array(row[f"item{i}_data"])
+                    )
+                    data = (
+                        np.array(data, copy=True) if not data.flags.writeable else data
+                    )
                     shape = tuple(row[f"item{i}_shape"])
                     tensor = torch.from_numpy(data).reshape(shape).to(map_location)
                     items.append(tensor)
@@ -440,7 +462,11 @@ class ArrowIPCCacheBackend:
         """
         # 1. Fast LRU pass
         results: list[Any | None] = [self.lru.get(k) for k in keys]
-        need = [(i, k) for i, (k, r) in enumerate(zip(keys, results, strict=False)) if r is None]
+        need = [
+            (i, k)
+            for i, (k, r) in enumerate(zip(keys, results, strict=False))
+            if r is None
+        ]
 
         if not need:
             return results, []
