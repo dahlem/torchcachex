@@ -64,13 +64,9 @@ jobs:
           python -m pip install --upgrade pip
           pip install -e ".[dev]"
 
-      - name: Check formatting with black
+      - name: Check formatting with ruff
         run: |
-          black --check src/ tests/
-
-      - name: Check import sorting with isort
-        run: |
-          isort --check-only src/ tests/
+          ruff format --check src/ tests/
 
       - name: Lint with ruff
         run: |
