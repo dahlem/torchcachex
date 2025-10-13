@@ -1,5 +1,0 @@
-# File-based feature storage
-_target_: shade_io.stores.FileFeatureStore
-cache_dir: ${paths.cache_dir}/shade_io
-format: npz  # Options: pt, npz, pkl, arrow
-compression: null  # Options: zstd, gzip, null
