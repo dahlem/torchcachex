@@ -30,6 +30,7 @@ dependencies = [
     "torch>=2.0.0",
     "pyarrow>=14.0.0",
     "cachetools>=5.0.0",
+    "numpy>=1.21.0",
 ]
 
 [project.optional-dependencies]
