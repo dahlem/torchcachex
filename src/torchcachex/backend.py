@@ -1,7 +1,7 @@
-"""Scalable cache backend using Arrow IPC + SQLite.
+"""Scalable cache backend using Arrow IPC + in-memory index.
 
 This module provides persistent caching using Apache Arrow IPC files
-with SQLite index for O(1) lookups, native tensor storage, and async writes.
+with pickle-backed in-memory index for O(1) lookups, native tensor storage, and async writes.
 """
 
 __authors__ = ["Dominik Dahlem"]
@@ -10,9 +10,7 @@ __status__ = "Production"
 import json
 import os
 import pickle
-import sqlite3
 import threading
-import time
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from typing import Any
@@ -25,15 +23,15 @@ from cachetools import LRUCache
 
 
 class ArrowIPCCacheBackend:
-    """Scalable cache using Arrow IPC + SQLite with native tensor storage.
+    """Scalable cache using Arrow IPC with in-memory index and native tensor storage.
 
     Features:
     - **O(1) append-only writes** via incremental Arrow segments
-    - **O(1) batched lookups** via SQLite index + Arrow memory-mapping
+    - **O(1) batched lookups** via in-memory dict index + Arrow memory-mapping
     - **Native tensor storage** with schema inferred from first forward pass
     - **LRU hot cache** for in-process hits
     - **Single-writer** (DDP-safe) via writer_rank
-    - **Crash recovery** via SQLite WAL and atomic commits
+    - **Crash recovery** via index rebuild from segments
     - **Scales to billions of samples** with constant memory usage
 
     The cache key is constructed as: `{module_id}:{sample_cache_id}`
@@ -44,7 +42,7 @@ class ArrowIPCCacheBackend:
                 segment_000000.arrow
                 segment_000001.arrow
                 ...
-            index.db (SQLite with WAL)
+            index.pkl (pickled dict: key → (segment_id, row_offset))
             schema.json
 
     Args:
@@ -71,8 +69,9 @@ class ArrowIPCCacheBackend:
     ):
         self.cache_dir = Path(cache_dir) / module_id
         self.segments_dir = self.cache_dir / "segments"
-        self.db_path = self.cache_dir / "index.db"
+        self.index_path = self.cache_dir / "index.pkl"
         self.schema_path = self.cache_dir / "schema.json"
+        self.module_id = module_id
 
         # Create directories
         self.segments_dir.mkdir(parents=True, exist_ok=True)
@@ -87,8 +86,8 @@ class ArrowIPCCacheBackend:
                 # Corrupted schema - will re-infer on next write
                 self.schema = None
 
-        # SQLite index with WAL mode
-        self.conn = self._init_database()
+        # In-memory index: key → (segment_id, row_offset)
+        self.index: dict[str, tuple[int, int]] = self._load_index()
 
         # Configuration
         self.async_write = async_write
@@ -113,53 +112,57 @@ class ArrowIPCCacheBackend:
         # Next segment ID
         self._current_segment_id = self._get_next_segment_id()
 
-    def _init_database(self) -> sqlite3.Connection:
-        """Initialize SQLite database with WAL mode for concurrent reads."""
-        conn = sqlite3.connect(str(self.db_path), check_same_thread=False)
+    def _load_index(self) -> dict[str, tuple[int, int]]:
+        """Load index from pickle file, or rebuild from segments if corrupted/missing."""
+        if not self.index_path.exists():
+            # No index file - rebuild from segments
+            return self._rebuild_index_from_segments()
 
-        # Enable WAL mode for concurrent reads during writes
-        conn.execute("PRAGMA journal_mode=WAL")
-        conn.execute("PRAGMA synchronous=NORMAL")  # Safe in WAL mode
-        conn.execute("PRAGMA temp_store=MEMORY")
-        conn.execute("PRAGMA mmap_size=30000000000")  # 30GB memory-mapped I/O
-        conn.execute("PRAGMA cache_size=-64000")  # 64MB page cache
+        try:
+            with open(self.index_path, "rb") as f:
+                return pickle.load(f)
+        except Exception:
+            # Corrupted index - rebuild from segments
+            return self._rebuild_index_from_segments()
 
-        # Create tables
-        conn.execute(
-            """CREATE TABLE IF NOT EXISTS cache (
-                key TEXT PRIMARY KEY,
-                segment_id INTEGER NOT NULL,
-                row_offset INTEGER NOT NULL
-            )"""
-        )
+    def _rebuild_index_from_segments(self) -> dict[str, tuple[int, int]]:
+        """Rebuild index by scanning all Arrow segments.
 
-        conn.execute(
-            """CREATE TABLE IF NOT EXISTS segments (
-                segment_id INTEGER PRIMARY KEY,
-                filename TEXT NOT NULL,
-                num_rows INTEGER NOT NULL,
-                created_at REAL NOT NULL
-            )"""
-        )
+        This is called on first init or if the index file is corrupted.
+        """
+        index: dict[str, tuple[int, int]] = {}
+        segment_files = sorted(self.segments_dir.glob("segment_*.arrow"))
 
-        conn.execute(
-            """CREATE TABLE IF NOT EXISTS metadata (
-                key TEXT PRIMARY KEY,
-                value TEXT NOT NULL
-            )"""
-        )
+        for segment_file in segment_files:
+            segment_id = int(segment_file.stem.split("_")[1])
+            try:
+                with pa.memory_map(str(segment_file), "r") as source:
+                    reader = pa.ipc.open_file(source)
+                    batch = reader.get_batch(0)
+                    keys = batch.column("key").to_pylist()
+                    for offset, key in enumerate(keys):
+                        index[key] = (segment_id, offset)
+            except Exception:
+                # Skip corrupted segment
+                continue
 
-        # Create index on segment_id for compaction queries (future)
-        conn.execute("""CREATE INDEX IF NOT EXISTS idx_segment ON cache(segment_id)""")
+        return index
 
-        conn.commit()
-        return conn
+    def _save_index(self) -> None:
+        """Save index to pickle file atomically."""
+        temp_path = self.index_path.with_suffix(".pkl.tmp")
+        with open(temp_path, "wb") as f:
+            pickle.dump(self.index, f, protocol=pickle.HIGHEST_PROTOCOL)
+        temp_path.rename(self.index_path)
 
     def _get_next_segment_id(self) -> int:
-        """Get next available segment ID."""
-        cursor = self.conn.execute("SELECT MAX(segment_id) FROM segments")
-        result = cursor.fetchone()[0]
-        return (result + 1) if result is not None else 0
+        """Get next available segment ID from existing segment files."""
+        segment_files = list(self.segments_dir.glob("segment_*.arrow"))
+        if not segment_files:
+            return 0
+
+        max_id = max(int(f.stem.split("_")[1]) for f in segment_files)
+        return max_id + 1
 
     def _load_schema(self) -> pa.Schema:
         """Load schema from disk."""
@@ -471,22 +474,14 @@ class ArrowIPCCacheBackend:
         if not need:
             return results, []
 
-        # 2. Query SQLite for (segment_id, row_offset)
-        missing_keys = [k for _, k in need]
-        placeholders = ",".join("?" * len(missing_keys))
-
-        cursor = self.conn.execute(
-            f"SELECT key, segment_id, row_offset FROM cache WHERE key IN ({placeholders})",
-            missing_keys,
-        )
-
-        # Group by segment for efficient Arrow reads
+        # 2. Query in-memory index for (segment_id, row_offset)
         segment_reads: dict[int, list[tuple[str, int, int]]] = {}
-        for key, segment_id, row_offset in cursor:
-            result_idx = next(i for i, k in need if k == key)
-            if segment_id not in segment_reads:
-                segment_reads[segment_id] = []
-            segment_reads[segment_id].append((key, row_offset, result_idx))
+        for result_idx, key in need:
+            if key in self.index:
+                segment_id, row_offset = self.index[key]
+                if segment_id not in segment_reads:
+                    segment_reads[segment_id] = []
+                segment_reads[segment_id].append((key, row_offset, result_idx))
 
         # 3. Read from Arrow segments (memory-mapped)
         for segment_id, reads in segment_reads.items():
@@ -587,9 +582,19 @@ class ArrowIPCCacheBackend:
                         field_values.append(None)
                 else:
                     field_values.append(value)
-            arrays[field.name] = field_values
 
-        record_batch = pa.RecordBatch.from_pydict(arrays, schema=self.schema)
+            # Convert to PyArrow array, handling ChunkedArrays
+            arr = pa.array(field_values, type=field.type)
+            # If it's a ChunkedArray, combine into a single Array
+            if isinstance(arr, pa.ChunkedArray):
+                arr = arr.combine_chunks()
+            arrays[field.name] = arr
+
+        # Create RecordBatch from arrays (not pydict, to handle pre-converted arrays)
+        record_batch = pa.RecordBatch.from_arrays(
+            list(arrays.values()),
+            schema=self.schema
+        )
 
         # 2. Write to temp Arrow file
         temp_file = self.segments_dir / f"segment_{segment_id:06d}.arrow.tmp"
@@ -600,32 +605,22 @@ class ArrowIPCCacheBackend:
             writer.write_batch(record_batch)
             writer.close()
 
-        # 3. Update SQLite index (atomic transaction)
+        # 3. Atomic rename (commit Arrow segment to disk)
+        temp_file.rename(final_file)
+
+        # 4. Update in-memory index and persist to disk
         try:
-            cursor = self.conn.cursor()
-            cursor.execute("BEGIN TRANSACTION")
+            # Update in-memory index (within lock for thread safety)
+            for i, (key, _) in enumerate(batch):
+                self.index[key] = (segment_id, i)
 
-            # Insert segment metadata
-            cursor.execute(
-                "INSERT INTO segments (segment_id, filename, num_rows, created_at) VALUES (?, ?, ?, ?)",
-                (segment_id, final_file.name, len(batch), time.time()),
-            )
-
-            # Insert key→(segment, offset) mappings
-            cursor.executemany(
-                "INSERT OR REPLACE INTO cache (key, segment_id, row_offset) VALUES (?, ?, ?)",
-                [(key, segment_id, i) for i, (key, _) in enumerate(batch)],
-            )
-
-            cursor.execute("COMMIT")
-
-            # 4. Atomic rename (only after SQLite commit succeeds)
-            temp_file.rename(final_file)
+            # Save index to disk atomically
+            self._save_index()
 
         except Exception as e:
-            cursor.execute("ROLLBACK")
-            if temp_file.exists():
-                temp_file.unlink()
+            # If index update fails, remove the segment file to maintain consistency
+            if final_file.exists():
+                final_file.unlink()
             raise e
 
     def flush(self) -> None:
@@ -638,12 +633,12 @@ class ArrowIPCCacheBackend:
                 self._flush_segment()
 
     def __del__(self) -> None:
-        """Cleanup: flush pending writes and shutdown executor."""
+        """Cleanup: flush pending writes, save index, and shutdown executor."""
         try:
             self.flush()
             if self.executor:
                 self.executor.shutdown(wait=True)
-            if self.conn:
-                self.conn.close()
+            # Final index save
+            self._save_index()
         except Exception:
             pass  # Best effort cleanup

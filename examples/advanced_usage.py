@@ -104,14 +104,14 @@ def example_kfold_cv():
 
         # Train on fold (features cached progressively)
         for batch in train_loader:
-            features = cached_extractor(batch["image"], cache_ids=batch["cache_ids"])
+            _features = cached_extractor(batch["image"], cache_ids=batch["cache_ids"])
             # ... train classifier ...
 
         backend.flush()
 
         # Validate (reuses cached features from overlapping samples)
         for batch in val_loader:
-            features = cached_extractor(batch["image"], cache_ids=batch["cache_ids"])
+            _features = cached_extractor(batch["image"], cache_ids=batch["cache_ids"])
             # ... evaluate ...
 
         print(f"  Fold {fold + 1} complete\n")
@@ -147,7 +147,7 @@ def example_ddp_training():
     print("Training (all ranks compute, only rank 0 writes cache)...")
     for batch in loader:
         # All ranks compute features
-        features = cached_extractor(batch["image"], cache_ids=batch["cache_ids"])
+        _features = cached_extractor(batch["image"], cache_ids=batch["cache_ids"])
         # ... train on features ...
 
     backend.flush()
@@ -201,13 +201,13 @@ def example_multiple_models_shared_cache():
 
     print("Training Model A (populates cache)...")
     for batch in loader:
-        logits = model_a(batch["image"], cache_ids=batch["cache_ids"])
+        _logits = model_a(batch["image"], cache_ids=batch["cache_ids"])
         # ... train model A ...
     backend.flush()
 
     print("Training Model B (reuses Model A's cache)...")
     for batch in loader:
-        logits = model_b(batch["image"], cache_ids=batch["cache_ids"])
+        _logits = model_b(batch["image"], cache_ids=batch["cache_ids"])
         # ... train model B ...
 
     print("Model B reused all features from Model A's cache!\n")

@@ -7,6 +7,7 @@ transparent caching with batched lookups and progressive enrichment.
 __authors__ = ["Dominik Dahlem"]
 __status__ = "Production"
 
+import logging
 from collections.abc import Callable
 from typing import Any
 
@@ -15,6 +16,8 @@ import torch.nn as nn
 
 from .backend import ArrowIPCCacheBackend
 from .utils import _tree_index, _tree_stack
+
+logger = logging.getLogger(__name__)
 
 
 class CacheModuleDecorator(nn.Module):
@@ -66,6 +69,12 @@ class CacheModuleDecorator(nn.Module):
         self.key_from_batch_fn = key_from_batch_fn
         self.enforce_stateless = enforce_stateless
         self.map_location_on_read = map_location_on_read
+
+        # Log module decoration for visibility
+        logger.info(
+            f"Decorated module: {type(module).__name__} "
+            f"(cache_key: {cache_backend.module_id}, enabled: {enabled})"
+        )
 
     def _extract_keys(self, args: tuple, kwargs: dict) -> tuple[list[str], list[int]]:
         """Extract cache keys from batch.

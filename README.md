@@ -6,11 +6,11 @@
 [![CI](https://github.com/dahlem/torchcachex/actions/workflows/ci.yml/badge.svg)](https://github.com/dahlem/torchcachex/actions)
 [![codecov](https://codecov.io/gh/dahlem/torchcachex/branch/main/graph/badge.svg)](https://codecov.io/gh/dahlem/torchcachex)
 
-**Drop-in PyTorch module caching with Arrow IPC + SQLite backend**
+**Drop-in PyTorch module caching with Arrow IPC + in-memory index backend**
 
 `torchcachex` provides transparent, per-sample caching for non-trainable PyTorch modules with:
 - ✅ **O(1) append-only writes** via incremental Arrow IPC segments
-- ✅ **O(1) batched lookups** via SQLite index + Arrow memory-mapping
+- ✅ **O(1) batched lookups** via in-memory index + Arrow memory-mapping
 - ✅ **Native tensor storage** with automatic dtype preservation
 - ✅ **LRU hot cache** for in-process hits
 - ✅ **Async writes** (non-blocking forward pass)
@@ -422,7 +422,7 @@ Wraps a PyTorch module to add transparent per-sample caching.
 
 ### `ArrowIPCCacheBackend`
 
-Persistent cache using Arrow IPC segments with SQLite index for O(1) operations.
+Persistent cache using Arrow IPC segments with in-memory index for O(1) operations.
 
 **Storage Format:**
 ```
@@ -431,7 +431,7 @@ cache_dir/module_id/
     segment_000000.arrow  # Incremental Arrow IPC files
     segment_000001.arrow
     ...
-  index.db               # SQLite with WAL mode
+  index.pkl             # Pickled dict: key → (segment_id, row_offset)
   schema.json           # Auto-inferred Arrow schema
 ```
 
@@ -446,22 +446,23 @@ cache_dir/module_id/
 - `current_rank` (Optional[int]): Current process rank (default: None)
 
 **Methods:**
-- `get_batch(keys, map_location="cpu")`: O(1) batch lookup via SQLite index + memory-mapped Arrow
+- `get_batch(keys, map_location="cpu")`: O(1) batch lookup via in-memory index + memory-mapped Arrow
 - `put_batch(items)`: O(1) append-only write to pending buffer
 - `flush()`: Force flush pending writes to new Arrow segment
 
 **Features:**
 - **O(1) writes**: New data appended to incremental segments, no rewrites
-- **O(1) reads**: SQLite index points directly to (segment_id, row_offset)
+- **O(1) reads**: In-memory dict index points directly to (segment_id, row_offset)
 - **Native tensors**: Automatic dtype preservation via Arrow's type system
 - **Schema inference**: Automatically detects structure on first write
-- **Crash safety**: Atomic commits via SQLite WAL + temp file approach
+- **Crash safety**: Automatic index rebuild from segments on corruption
+- **No database dependencies**: Simple pickle-based index persistence
 
 ## Architecture
 
 ### Storage Design
 
-torchcachex uses a hybrid Arrow IPC + SQLite architecture optimized for billion-scale caching:
+torchcachex uses a hybrid Arrow IPC + in-memory index architecture optimized for billion-scale caching:
 
 **Components:**
 
@@ -471,11 +472,12 @@ torchcachex uses a hybrid Arrow IPC + SQLite architecture optimized for billion-
    - Memory-mapped for zero-copy reads
    - Each segment contains a batch of cached samples
 
-2. **SQLite Index** (`index.db`)
-   - WAL (Write-Ahead Logging) mode for concurrent reads
+2. **Pickle Index** (`index.pkl`)
+   - In-memory Python dict backed by pickle persistence
    - Maps cache keys to (segment_id, row_offset)
-   - O(1) lookups via primary key index
-   - Tracks segment metadata (file paths, row counts)
+   - O(1) lookups via dict access
+   - Atomic persistence with temp file swap
+   - Auto-rebuilds from segments on corruption
 
 3. **Schema File** (`schema.json`)
    - Auto-inferred from first forward pass
@@ -488,8 +490,9 @@ torchcachex uses a hybrid Arrow IPC + SQLite architecture optimized for billion-
 put_batch() → pending buffer → flush() → {
   1. Create Arrow RecordBatch
   2. Write to temp segment file
-  3. Update SQLite index (atomic transaction)
+  3. Update in-memory index dict
   4. Atomic rename temp → final
+  5. Persist index.pkl (atomic)
 }
 ```
 
@@ -498,7 +501,7 @@ put_batch() → pending buffer → flush() → {
 ```
 get_batch() → {
   1. Check LRU cache (in-memory)
-  2. Query SQLite for (segment_id, row_offset)
+  2. Query in-memory index for (segment_id, row_offset)
   3. Memory-map Arrow segment
   4. Extract rows (zero-copy)
   5. Reconstruct tensors with correct dtype
@@ -508,10 +511,10 @@ get_batch() → {
 **Scalability Properties:**
 
 - **Writes**: O(1) - append new segment, update index
-- **Reads**: O(1) - direct index lookup + memory-map
+- **Reads**: O(1) - direct dict lookup + memory-map
 - **Memory**: O(working set) - only LRU + current segment in memory
 - **Disk**: O(N) - one entry per sample across segments
-- **Crash Recovery**: Atomic - incomplete segments ignored, SQLite WAL ensures consistency
+- **Crash Recovery**: Atomic - incomplete segments ignored, index auto-rebuilds from segments if corrupted
 
 ### Schema Inference
 

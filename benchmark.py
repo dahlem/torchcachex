@@ -12,11 +12,9 @@ Generates markdown report with results.
 
 import argparse
 import os
-import shutil
 import tempfile
 import time
 from dataclasses import dataclass
-from typing import List
 
 import torch
 import torch.nn as nn
@@ -81,7 +79,7 @@ class BenchmarkModule(nn.Module):
         return self.fc(x)
 
 
-def benchmark_write_scaling(tmpdir: str) -> List[BenchmarkResult]:
+def benchmark_write_scaling(tmpdir: str) -> list[BenchmarkResult]:
     """Verify O(1) write scaling: flush time independent of cache size."""
     print("\n[Benchmark] Write Scaling (O(1) Verification)")
     print("=" * 60)
@@ -133,7 +131,7 @@ def benchmark_write_scaling(tmpdir: str) -> List[BenchmarkResult]:
     return results
 
 
-def benchmark_read_performance(tmpdir: str) -> List[BenchmarkResult]:
+def benchmark_read_performance(tmpdir: str) -> list[BenchmarkResult]:
     """Measure read performance at different cache sizes."""
     print("\n[Benchmark] Read Performance")
     print("=" * 60)
@@ -156,7 +154,7 @@ def benchmark_read_performance(tmpdir: str) -> List[BenchmarkResult]:
         backend.flush()
 
         # Benchmark random reads
-        print(f"  Benchmarking 1000 random reads...")
+        print("  Benchmarking 1000 random reads...")
         import random
 
         random.seed(42)
@@ -184,15 +182,13 @@ def benchmark_read_performance(tmpdir: str) -> List[BenchmarkResult]:
     return results
 
 
-def benchmark_memory_usage(tmpdir: str) -> List[BenchmarkResult]:
+def benchmark_memory_usage(tmpdir: str) -> list[BenchmarkResult]:
     """Measure memory usage at different cache sizes."""
     print("\n[Benchmark] Memory Usage")
     print("=" * 60)
 
     try:
         import psutil
-
-        HAS_PSUTIL = True
     except ImportError:
         print("  [Skip] psutil not installed")
         return []
@@ -237,7 +233,7 @@ def benchmark_memory_usage(tmpdir: str) -> List[BenchmarkResult]:
     return results
 
 
-def benchmark_cache_speedup(tmpdir: str) -> List[BenchmarkResult]:
+def benchmark_cache_speedup(tmpdir: str) -> list[BenchmarkResult]:
     """Compare cached vs uncached performance."""
     print("\n[Benchmark] Cache Speedup")
     print("=" * 60)
@@ -250,7 +246,7 @@ def benchmark_cache_speedup(tmpdir: str) -> List[BenchmarkResult]:
     loader = DataLoader(dataset, batch_size=batch_size, shuffle=False)
 
     # Benchmark WITHOUT caching
-    print(f"  Running WITHOUT cache...")
+    print("  Running WITHOUT cache...")
     module_nocache = BenchmarkModule()
 
     start = time.time()
@@ -261,7 +257,7 @@ def benchmark_cache_speedup(tmpdir: str) -> List[BenchmarkResult]:
     print(f"    Time: {time_nocache:.3f}s, Calls: {module_nocache.call_count}")
 
     # Benchmark WITH caching (first epoch - populate cache)
-    print(f"  Running WITH cache (epoch 1 - populate)...")
+    print("  Running WITH cache (epoch 1 - populate)...")
     backend = ArrowIPCCacheBackend(
         cache_dir=tmpdir,
         module_id="speedup_test",
@@ -279,7 +275,7 @@ def benchmark_cache_speedup(tmpdir: str) -> List[BenchmarkResult]:
     print(f"    Time: {time_epoch1:.3f}s, Module calls: {module_cached.call_count}")
 
     # Benchmark WITH caching (second epoch - cache hits)
-    print(f"  Running WITH cache (epoch 2 - cache hits)...")
+    print("  Running WITH cache (epoch 2 - cache hits)...")
     module_cached.call_count = 0
 
     start = time.time()
@@ -321,7 +317,7 @@ def benchmark_cache_speedup(tmpdir: str) -> List[BenchmarkResult]:
     return results
 
 
-def benchmark_async_write(tmpdir: str) -> List[BenchmarkResult]:
+def benchmark_async_write(tmpdir: str) -> list[BenchmarkResult]:
     """Compare async vs sync write performance."""
     print("\n[Benchmark] Async Write Performance")
     print("=" * 60)
@@ -334,7 +330,7 @@ def benchmark_async_write(tmpdir: str) -> List[BenchmarkResult]:
     loader = DataLoader(dataset, batch_size=batch_size, shuffle=False)
 
     # Benchmark SYNC writes
-    print(f"  Running with SYNC writes...")
+    print("  Running with SYNC writes...")
     backend_sync = ArrowIPCCacheBackend(
         cache_dir=tmpdir,
         module_id="async_test_sync",
@@ -355,7 +351,7 @@ def benchmark_async_write(tmpdir: str) -> List[BenchmarkResult]:
     print(f"    Time: {time_sync:.3f}s")
 
     # Benchmark ASYNC writes
-    print(f"  Running with ASYNC writes...")
+    print("  Running with ASYNC writes...")
     backend_async = ArrowIPCCacheBackend(
         cache_dir=tmpdir,
         module_id="async_test_async",
@@ -398,7 +394,7 @@ def benchmark_async_write(tmpdir: str) -> List[BenchmarkResult]:
     return results
 
 
-def benchmark_dtype_preservation(tmpdir: str) -> List[BenchmarkResult]:
+def benchmark_dtype_preservation(tmpdir: str) -> list[BenchmarkResult]:
     """Verify dtype preservation across different tensor types."""
     print("\n[Benchmark] Dtype Preservation")
     print("=" * 60)
@@ -450,7 +446,7 @@ def benchmark_dtype_preservation(tmpdir: str) -> List[BenchmarkResult]:
     return results
 
 
-def generate_markdown_report(all_results: List[BenchmarkResult], output_file: str):
+def generate_markdown_report(all_results: list[BenchmarkResult], output_file: str):
     """Generate markdown report from benchmark results."""
     print(f"\n[Report] Generating markdown report: {output_file}")
 

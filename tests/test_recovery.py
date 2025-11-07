@@ -7,6 +7,7 @@ import shutil
 import tempfile
 from pathlib import Path
 
+import pyarrow as pa
 import torch
 
 from torchcachex import ArrowIPCCacheBackend
@@ -44,7 +45,7 @@ class TestCrashRecovery:
             assert all(r is not None for r in results)
 
     def test_orphaned_segment_file(self):
-        """Test handling of segment file without SQLite entry."""
+        """Test handling of segment file without index entry."""
         with tempfile.TemporaryDirectory() as tmpdir:
             backend = ArrowIPCCacheBackend(
                 cache_dir=tmpdir, module_id="test", async_write=False
@@ -184,18 +185,21 @@ class TestDataIntegrity:
             segments_dir = Path(tmpdir) / "test" / "segments"
             _ = list(segments_dir.glob("segment_*.arrow"))  # Verify directory exists
 
-            # Count entries in SQLite
-            cursor = backend.conn.execute("SELECT COUNT(*) FROM cache")
-            cache_count = cursor.fetchone()[0]
+            # Count entries in index
+            index_count = len(backend.index)
 
-            # Count entries in segments metadata
-            cursor = backend.conn.execute("SELECT SUM(num_rows) FROM segments")
-            segment_count = cursor.fetchone()[0]
+            # Count entries in segments
+            segment_count = 0
+            for segment_file in segments_dir.glob("segment_*.arrow"):
+                with pa.memory_map(str(segment_file), 'r') as source:
+                    reader = pa.ipc.open_file(source)
+                    table = reader.read_all()
+                    segment_count += len(table)
 
-            assert cache_count == segment_count == 10
+            assert index_count == segment_count == 10
 
     def test_index_segment_consistency(self):
-        """Test that SQLite index and Arrow segments stay consistent."""
+        """Test that pickle index and Arrow segments stay consistent."""
         with tempfile.TemporaryDirectory() as tmpdir:
             backend = ArrowIPCCacheBackend(
                 cache_dir=tmpdir, module_id="test", async_write=False, flush_every=20
@@ -210,8 +214,7 @@ class TestDataIntegrity:
                 backend.flush()
 
             # Verify index count matches actual segments
-            cursor = backend.conn.execute("SELECT COUNT(*) FROM cache")
-            total_keys = cursor.fetchone()[0]
+            total_keys = len(backend.index)
 
             # Count keys across all segments
             segments_dir = Path(tmpdir) / "test" / "segments"
@@ -219,8 +222,6 @@ class TestDataIntegrity:
 
             total_rows = 0
             for seg_file in segment_files:
-                import pyarrow as pa
-
                 with pa.memory_map(str(seg_file), "r") as source:
                     reader = pa.ipc.open_file(source)
                     table = reader.read_all()
