@@ -6,11 +6,11 @@
 [![CI](https://github.com/dahlem/torchcachex/actions/workflows/ci.yml/badge.svg)](https://github.com/dahlem/torchcachex/actions)
 [![codecov](https://codecov.io/gh/dahlem/torchcachex/branch/main/graph/badge.svg)](https://codecov.io/gh/dahlem/torchcachex)
 
-**Drop-in PyTorch module caching with Arrow IPC + SQLite backend**
+**Drop-in PyTorch module caching with Arrow IPC + in-memory index backend**
 
 `torchcachex` provides transparent, per-sample caching for non-trainable PyTorch modules with:
 - ✅ **O(1) append-only writes** via incremental Arrow IPC segments
-- ✅ **O(1) batched lookups** via SQLite index + Arrow memory-mapping
+- ✅ **O(1) batched lookups** via in-memory index + Arrow memory-mapping
 - ✅ **Native tensor storage** with automatic dtype preservation
 - ✅ **LRU hot cache** for in-process hits
 - ✅ **Async writes** (non-blocking forward pass)
@@ -422,7 +422,7 @@ Wraps a PyTorch module to add transparent per-sample caching.
 
 ### `ArrowIPCCacheBackend`
 
-Persistent cache using Arrow IPC segments with SQLite index for O(1) operations.
+Persistent cache using Arrow IPC segments with in-memory index for O(1) operations.
 
 **Storage Format:**
 ```
@@ -431,7 +431,7 @@ cache_dir/module_id/
     segment_000000.arrow  # Incremental Arrow IPC files
     segment_000001.arrow
     ...
-  index.db               # SQLite with WAL mode
+  index.pkl             # Pickled dict: key → (segment_id, row_offset)
   schema.json           # Auto-inferred Arrow schema
 ```
 
@@ -446,16 +446,17 @@ cache_dir/module_id/
 - `current_rank` (Optional[int]): Current process rank (default: None)
 
 **Methods:**
-- `get_batch(keys, map_location="cpu")`: O(1) batch lookup via SQLite index + memory-mapped Arrow
+- `get_batch(keys, map_location="cpu")`: O(1) batch lookup via in-memory index + memory-mapped Arrow
 - `put_batch(items)`: O(1) append-only write to pending buffer
 - `flush()`: Force flush pending writes to new Arrow segment
 
 **Features:**
 - **O(1) writes**: New data appended to incremental segments, no rewrites
-- **O(1) reads**: SQLite index points directly to (segment_id, row_offset)
+- **O(1) reads**: In-memory dict index points directly to (segment_id, row_offset)
 - **Native tensors**: Automatic dtype preservation via Arrow's type system
 - **Schema inference**: Automatically detects structure on first write
-- **Crash safety**: Atomic commits via SQLite WAL + temp file approach
+- **Crash safety**: Automatic index rebuild from segments on corruption
+- **No database dependencies**: Simple pickle-based index persistence
 
 ## Architecture
 
