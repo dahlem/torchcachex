@@ -191,7 +191,7 @@ class TestDataIntegrity:
             # Count entries in segments
             segment_count = 0
             for segment_file in segments_dir.glob("segment_*.arrow"):
-                with pa.memory_map(str(segment_file), 'r') as source:
+                with pa.memory_map(str(segment_file), "r") as source:
                     reader = pa.ipc.open_file(source)
                     table = reader.read_all()
                     segment_count += len(table)
