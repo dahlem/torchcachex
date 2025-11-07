@@ -1,4 +1,4 @@
-"""torchcachex: Drop-in PyTorch module caching with Arrow IPC + SQLite backend.
+"""torchcachex: Drop-in PyTorch module caching with Arrow IPC + in-memory index backend.
 
 This library provides transparent, per-sample caching for non-trainable PyTorch modules
 with O(1) append-only writes, native tensor storage, batched lookups, LRU hot cache,

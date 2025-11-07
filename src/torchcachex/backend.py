@@ -1,7 +1,7 @@
-"""Scalable cache backend using Arrow IPC + SQLite.
+"""Scalable cache backend using Arrow IPC + in-memory index.
 
 This module provides persistent caching using Apache Arrow IPC files
-with SQLite index for O(1) lookups, native tensor storage, and async writes.
+with pickle-backed in-memory index for O(1) lookups, native tensor storage, and async writes.
 """
 
 __authors__ = ["Dominik Dahlem"]

@@ -462,7 +462,7 @@ cache_dir/module_id/
 
 ### Storage Design
 
-torchcachex uses a hybrid Arrow IPC + SQLite architecture optimized for billion-scale caching:
+torchcachex uses a hybrid Arrow IPC + in-memory index architecture optimized for billion-scale caching:
 
 **Components:**
 
@@ -472,11 +472,12 @@ torchcachex uses a hybrid Arrow IPC + SQLite architecture optimized for billion-
    - Memory-mapped for zero-copy reads
    - Each segment contains a batch of cached samples
 
-2. **SQLite Index** (`index.db`)
-   - WAL (Write-Ahead Logging) mode for concurrent reads
+2. **Pickle Index** (`index.pkl`)
+   - In-memory Python dict backed by pickle persistence
    - Maps cache keys to (segment_id, row_offset)
-   - O(1) lookups via primary key index
-   - Tracks segment metadata (file paths, row counts)
+   - O(1) lookups via dict access
+   - Atomic persistence with temp file swap
+   - Auto-rebuilds from segments on corruption
 
 3. **Schema File** (`schema.json`)
    - Auto-inferred from first forward pass
@@ -489,8 +490,9 @@ torchcachex uses a hybrid Arrow IPC + SQLite architecture optimized for billion-
 put_batch() → pending buffer → flush() → {
   1. Create Arrow RecordBatch
   2. Write to temp segment file
-  3. Update SQLite index (atomic transaction)
+  3. Update in-memory index dict
   4. Atomic rename temp → final
+  5. Persist index.pkl (atomic)
 }
 ```
 
@@ -499,7 +501,7 @@ put_batch() → pending buffer → flush() → {
 ```
 get_batch() → {
   1. Check LRU cache (in-memory)
-  2. Query SQLite for (segment_id, row_offset)
+  2. Query in-memory index for (segment_id, row_offset)
   3. Memory-map Arrow segment
   4. Extract rows (zero-copy)
   5. Reconstruct tensors with correct dtype
@@ -509,10 +511,10 @@ get_batch() → {
 **Scalability Properties:**
 
 - **Writes**: O(1) - append new segment, update index
-- **Reads**: O(1) - direct index lookup + memory-map
+- **Reads**: O(1) - direct dict lookup + memory-map
 - **Memory**: O(working set) - only LRU + current segment in memory
 - **Disk**: O(N) - one entry per sample across segments
-- **Crash Recovery**: Atomic - incomplete segments ignored, SQLite WAL ensures consistency
+- **Crash Recovery**: Atomic - incomplete segments ignored, index auto-rebuilds from segments if corrupted
 
 ### Schema Inference
 
