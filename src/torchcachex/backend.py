@@ -592,8 +592,7 @@ class ArrowIPCCacheBackend:
 
         # Create RecordBatch from arrays (not pydict, to handle pre-converted arrays)
         record_batch = pa.RecordBatch.from_arrays(
-            list(arrays.values()),
-            schema=self.schema
+            list(arrays.values()), schema=self.schema
         )
 
         # 2. Write to temp Arrow file
