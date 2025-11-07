@@ -225,7 +225,6 @@ class TestIndexPersistence:
 
     def test_index_persists_to_disk(self):
         """Test that index is saved to pickle file."""
-        import os
         from pathlib import Path
 
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -245,7 +244,6 @@ class TestIndexPersistence:
 
     def test_index_rebuild_from_segments(self):
         """Test that index can be rebuilt from Arrow segments."""
-        import os
         from pathlib import Path
 
         with tempfile.TemporaryDirectory() as tmpdir:

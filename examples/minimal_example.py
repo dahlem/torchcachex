@@ -44,7 +44,7 @@ loader = DataLoader(dataset, batch_size=10)
 print("Training...")
 for epoch in range(3):
     print(f"  Epoch {epoch + 1}/3")
-    for batch_idx, (batch_images, batch_labels) in enumerate(loader):
+    for batch_idx, (batch_images, _batch_labels) in enumerate(loader):
         # Get cache IDs for this batch
         start_idx = batch_idx * 10
         batch_cache_ids = cache_ids[start_idx : start_idx + 10]

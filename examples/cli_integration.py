@@ -13,6 +13,7 @@ import torch
 from hydra.utils import instantiate
 from omegaconf import DictConfig
 from rich.console import Console
+from shade_io.feature_sets.filters import RemoveConstantFeaturesFilter
 from sklearn.decomposition import PCA
 
 # Import shade-io components
@@ -23,7 +24,6 @@ from shade_io import (
     FilteredFeatureSet,
     SimpleFeatureSet,
 )
-from shade_io.feature_sets.filters import RemoveConstantFeaturesFilter
 
 logger = logging.getLogger(__name__)
 console = Console()
