@@ -7,6 +7,7 @@ import shutil
 import tempfile
 from pathlib import Path
 
+import pyarrow as pa
 import torch
 
 from torchcachex import ArrowIPCCacheBackend
@@ -213,8 +214,7 @@ class TestDataIntegrity:
                 backend.flush()
 
             # Verify index count matches actual segments
-            cursor = backend.conn.execute("SELECT COUNT(*) FROM cache")
-            total_keys = cursor.fetchone()[0]
+            total_keys = len(backend.index)
 
             # Count keys across all segments
             segments_dir = Path(tmpdir) / "test" / "segments"
@@ -222,8 +222,6 @@ class TestDataIntegrity:
 
             total_rows = 0
             for seg_file in segment_files:
-                import pyarrow as pa
-
                 with pa.memory_map(str(seg_file), "r") as source:
                     reader = pa.ipc.open_file(source)
                     table = reader.read_all()

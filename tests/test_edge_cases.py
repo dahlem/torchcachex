@@ -190,7 +190,7 @@ class TestBackendEdgeCases:
 
             # The exception path is hard to trigger without mocking
             # but we verify the backend handles normal operations
-            assert backend.db_path.exists()
+            assert backend.index_path.exists()
 
     def test_flush_on_non_writer_rank(self):
         """Test flush() on non-writer rank (line 602)."""
