@@ -8,10 +8,13 @@ __authors__ = ["Dominik Dahlem"]
 __status__ = "Production"
 
 import io
+import logging
 from collections.abc import Mapping, Sequence
 from typing import Any
 
 import torch
+
+logger = logging.getLogger(__name__)
 
 # Type alias for nested tensor structures
 TensorLike = torch.Tensor | Sequence | Mapping
@@ -22,7 +25,8 @@ def _tree_index(x: Any, i: int) -> Any:
 
     Supports:
     - torch.Tensor: indexes on dim 0
-    - list/tuple: recursively indexes each element
+    - list of tensors (from variable-length stacking): extracts i-th tensor directly
+    - list/tuple of other structures: recursively indexes each element
     - dict: recursively indexes each value
     - other: returns as-is (non-tensor leaf)
 
@@ -34,8 +38,13 @@ def _tree_index(x: Any, i: int) -> Any:
         The i-th sample from the structure
 
     Examples:
+        >>> # Stacked batch tensor
         >>> tensor = torch.randn(4, 3, 224, 224)
         >>> sample = _tree_index(tensor, 0)  # shape: (3, 224, 224)
+
+        >>> # List of variable-length tensors (from _tree_stack with variable shapes)
+        >>> tensor_list = [torch.randn(12, 30, 30), torch.randn(12, 50, 50)]
+        >>> sample = _tree_index(tensor_list, 1)  # shape: (12, 50, 50)
 
         >>> nested = {"img": torch.randn(4, 3, 224, 224), "label": torch.tensor([1, 2, 3, 4])}
         >>> sample = _tree_index(nested, 1)  # {"img": (3, 224, 224), "label": 2}
@@ -43,6 +52,11 @@ def _tree_index(x: Any, i: int) -> Any:
     if torch.is_tensor(x):
         return x[i]
     if isinstance(x, list):
+        # Check if it's a list of tensors (from variable-length stacking)
+        if x and torch.is_tensor(x[0]):
+            # List of tensors - return i-th tensor directly
+            return x[i]
+        # List of other structures - recursively index each element
         return [_tree_index(xx, i) for xx in x]
     if isinstance(x, tuple):
         return tuple(_tree_index(xx, i) for xx in x)
@@ -57,15 +71,24 @@ def _tree_stack(samples: list[Any]) -> Any:
 
     Inverse operation of _tree_index. Supports the same nested structures.
 
+    For tensors with uniform shapes, returns a stacked batch tensor.
+    For tensors with variable shapes (e.g., different sequence lengths),
+    returns a list of tensors to preserve exact shapes.
+
     Args:
         samples: List of samples to stack
 
     Returns:
-        Batched structure
+        Batched structure (stacked tensor if shapes match, list otherwise)
 
     Examples:
+        >>> # Uniform shapes - returns stacked batch
         >>> samples = [torch.randn(3, 224, 224) for _ in range(4)]
         >>> batch = _tree_stack(samples)  # shape: (4, 3, 224, 224)
+
+        >>> # Variable shapes - returns list
+        >>> samples = [torch.randn(12, 30, 30), torch.randn(12, 50, 50)]
+        >>> batch = _tree_stack(samples)  # List[Tensor] with shapes [(12,30,30), (12,50,50)]
 
         >>> samples = [{"img": torch.randn(3, 224, 224), "label": i} for i in range(4)]
         >>> batch = _tree_stack(samples)  # {"img": (4, 3, 224, 224), "label": [0,1,2,3]}
@@ -76,7 +99,19 @@ def _tree_stack(samples: list[Any]) -> Any:
     x0 = samples[0]
 
     if torch.is_tensor(x0):
-        return torch.stack(samples, dim=0)
+        # Check if all tensors have the same shape
+        shapes = [s.shape for s in samples]
+        if all(shape == shapes[0] for shape in shapes):
+            # All same shape - stack normally for efficient batch processing
+            return torch.stack(samples, dim=0)
+        else:
+            # Variable shapes - return list to preserve exact dimensions
+            # This is seamless for variable-length sequence processing
+            logger.debug(
+                f"Variable tensor shapes detected in batch: {shapes}. "
+                "Returning list instead of stacked batch to preserve exact shapes."
+            )
+            return samples
 
     if isinstance(x0, list):
         # Stack each position in the list

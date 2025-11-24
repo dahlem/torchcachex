@@ -301,17 +301,18 @@ class TestModuleWithDifferentOutputTypes:
             assert torch.allclose(out1[2], out2[2])
 
     def test_list_output(self):
-        """Test caching with list outputs."""
+        """Test caching with tuple outputs (lists reserved for variable-length)."""
         with tempfile.TemporaryDirectory() as tmpdir:
 
-            class ListModule(nn.Module):
+            class TupleModule(nn.Module):
                 def forward(self, x):
-                    return [x * 2, x * 3, x.sum(dim=-1)]
+                    # Use tuple for structural outputs (list reserved for variable-length)
+                    return (x * 2, x * 3, x.sum(dim=-1))
 
             backend = ArrowIPCCacheBackend(
                 cache_dir=tmpdir, module_id="test", async_write=False
             )
-            module = ListModule()
+            module = TupleModule()
             cached = CacheModuleDecorator(module, backend, enabled=True)
 
             x = torch.randn(4, 10)
