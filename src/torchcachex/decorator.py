@@ -123,10 +123,12 @@ class CacheModuleDecorator(nn.Module):
             Object moved to target device
         """
         device = ref.device if torch.is_tensor(ref) else torch.device("cpu")
+        # MPS doesn't fully support non_blocking transfers - can cause hangs
+        use_non_blocking = device.type not in ("mps",)
 
         def move(o: Any) -> Any:
             if torch.is_tensor(o):
-                return o.to(device=device, non_blocking=True)
+                return o.to(device=device, non_blocking=use_non_blocking)
             if isinstance(o, list):
                 return [move(v) for v in o]
             if isinstance(o, tuple):
@@ -192,6 +194,32 @@ class CacheModuleDecorator(nn.Module):
         with torch.no_grad():
             out_miss = self.module(*args_miss, **kwargs_clean)
 
+        # MPS requires sync before CPU copy to avoid hangs
+        # Check if output contains MPS tensors and sync once
+        def _has_mps_tensor(obj: Any) -> bool:
+            if torch.is_tensor(obj):
+                return obj.device.type == "mps"
+            if isinstance(obj, dict):
+                return any(_has_mps_tensor(v) for v in obj.values())
+            if isinstance(obj, (list, tuple)):
+                return any(_has_mps_tensor(v) for v in obj)
+            return False
+
+        if _has_mps_tensor(out_miss):
+            torch.mps.synchronize()
+
+        # Helper to recursively move tensors to CPU for safe caching
+        def _to_cpu(obj: Any) -> Any:
+            if torch.is_tensor(obj):
+                return obj.detach().cpu()
+            if isinstance(obj, dict):
+                return {k: _to_cpu(v) for k, v in obj.items()}
+            if isinstance(obj, list):
+                return [_to_cpu(v) for v in obj]
+            if isinstance(obj, tuple):
+                return tuple(_to_cpu(v) for v in obj)
+            return obj
+
         # Slice per sample, write to cache, assemble final batch
         new_entries = {}
         per_sample = {}
@@ -199,18 +227,34 @@ class CacheModuleDecorator(nn.Module):
         for j, pos in enumerate(missing_pos):
             sample_out = _tree_index(out_miss, j)  # j-th in miss sub-batch
             per_sample[pos] = sample_out
-            new_entries[keys[pos]] = sample_out
+            # Move to CPU for safe caching (avoids MPS serialization hangs)
+            new_entries[keys[pos]] = _to_cpu(sample_out)
 
         self.cache.put_batch(new_entries)
 
         # Merge hits + misses in input order; stack back to batch
         ref = args[0] if args else None
+
+        # MPS sync before moving tensors (per_sample may contain MPS tensors)
+        has_mps_samples = any(
+            _has_mps_tensor(per_sample.get(i)) for i in positions if i in per_sample
+        )
+        if has_mps_samples:
+            torch.mps.synchronize()
+
         merged = []
         for i in positions:
             obj = per_sample[i] if i in per_sample else cached_objs[i]
             merged.append(self._move_like_input(obj, ref))
 
-        return _tree_stack(merged)
+        result = _tree_stack(merged)
+
+        # Final MPS sync to ensure all transfers are complete
+        # This prevents MPS state corruption after return
+        if has_mps_samples:
+            torch.mps.synchronize()
+
+        return result
 
     def state_dict(self, *args: Any, **kwargs: Any) -> dict:
         """Save only the inner module's weights (cache state is out-of-band).
