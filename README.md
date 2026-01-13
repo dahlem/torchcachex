@@ -17,6 +17,7 @@
 - ✅ **DDP-safe** single-writer pattern
 - ✅ **Progressive enrichment** (resume from partial caches)
 - ✅ **Device-agnostic** (store CPU, return on input device)
+- ✅ **MPS (Apple Silicon) support** with automatic synchronization
 - ✅ **Scales to billions of samples** with constant memory usage
 
 ## Why torchcachex?
@@ -568,6 +569,19 @@ input_cuda = batch["images"].to("cuda")
 features = cached_extractor(input_cuda, cache_ids=batch["ids"])
 assert features.device.type == "cuda"  # ✓ Same device as input
 ```
+
+**3. MPS (Apple Silicon) Support**
+
+MPS devices are fully supported with automatic synchronization:
+
+```python
+# Transparent MPS handling - syncs automatically before transfers
+input_mps = batch["images"].to("mps")
+features = cached_extractor(input_mps, cache_ids=batch["ids"])
+assert features.device.type == "mps"  # ✓ Same device as input
+```
+
+The decorator handles the asynchronous nature of MPS by calling `torch.mps.synchronize()` before CPU transfers, preventing potential hangs.
 
 See **[ARCHITECTURE.md § Operational Caveats](ARCHITECTURE.md#operational-caveats)** for detailed explanation of both constraints and their implementations.
 
